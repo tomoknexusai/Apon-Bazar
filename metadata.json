@@ -1,0 +1,6 @@
+{
+  "name": "Apon Bazar",
+  "description": "Apon Bazar (আপন বাজার): Complete, modern, mobile-first Bangladeshi e-commerce platform & binary network ecosystem with delivery tracking, multi-vendor support, and authentic shopping.",
+  "requestFramePermissions": ["camera", "geolocation", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
