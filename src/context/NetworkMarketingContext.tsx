@@ -10,6 +10,7 @@ import {
   ActivationPackage,
   AIActivationPlacementResult,
   AISmartGeoResult,
+  BinaryTreePersistenceState,
   CommissionConfig,
   NetworkMember,
   NetworkReportData,
@@ -25,6 +26,33 @@ import {
   COMPANY_MASTER_ROOT_ID
 } from '../types/networkMarketing';
 import { calculateIdGrade } from '../lib/binaryNetworkEngine';
+import { INITIAL_MATCHING_HISTORY, SEED_BINARY_MEMBERS } from '../lib/seedBinaryMembers';
+import {
+  BlankSlotRegistrationParams,
+  BlankSlotRegistrationResult,
+  IsolatedSubtreeStats,
+  executeAtomicBlankSlotRegistration,
+  extractIsolatedBinarySubtree,
+  findBinaryTreeNodeById,
+  formatBinaryCompanyId,
+  isCompanyIdInSubtree,
+  parseBinaryCompanyIdSeq,
+  reconcileBinaryTreeState
+} from '../lib/binaryBlankPositionEngine';
+
+export interface IsolatedSubtreeApiResponse {
+  success: boolean;
+  statusCode: number;
+  errorCode?: 'INVALID_INPUT' | 'ACCESS_DENIED' | 'NOT_FOUND';
+  message: string;
+  rootId?: string;
+  rootNode?: NetworkMember;
+  nodes?: NetworkMember[];
+  stats?: IsolatedSubtreeStats;
+  authorizedScope?: 'admin_full' | 'member_subtree';
+}
+
+export { INITIAL_MATCHING_HISTORY };
 
 // ----------------------------------------------------------------------
 // Default Activation Packages (100 PV - 500 PV)
@@ -324,781 +352,16 @@ const DEFAULT_COMMISSION_CONFIG: CommissionConfig = {
   withdrawalFeePct: 2 // 2% withdrawal charge
 };
 
-// Initial Seed Members - Permanent Multi-Level Binary Tree with Distinct Sponsor Tree
-// Starting strictly from Company Master Root: GBD000001
-const SEED_MEMBERS: NetworkMember[] = [
-  {
-    id: 'GBD000001',
-    member_id: 'GBD000001',
-    userId: 'usr-company-root',
-    fullName: 'Company Master (GBD000001)',
-    full_name: 'Company Master (GBD000001)',
-    mobile: '01312480175',
-    email: 'master@ghorerbazarbd.com',
-    joinDate: '2026-01-01',
-    created_at: '2026-01-01T00:00:00.000Z',
-    rank: 'founder',
-    packageId: 'pkg-500',
-    packageName: 'ফাউন্ডার প্রিমিয়াম (500 PV)',
-    placementLeg: 'left',
-    position: 'Root',
-    sponsorId: 'GBD000001',
-    sponsor_id: 'GBD000001',
-    sponsorName: 'Company Master',
-    placementId: 'GBD000001',
-    placement_id: 'GBD000001',
-    mentorLeader: 'Company Master',
-    memberType: 'Company',
-    member_type: 'Company',
-    parentId: undefined, // NULL (Company Master Root Node)
-    parent_id: undefined,
-    binaryParentId: undefined,
-    binary_parent_id: undefined,
-    leftChildId: 'GBD000002',
-    rightChildId: 'GBD000003',
-    pv: 1000,
-    personal_pv: 1000,
-    leftPV: 14500,
-    left_pv: 14500,
-    rightPV: 12800,
-    right_pv: 12800,
-    leftCarryForward: 1700,
-    left_carry_forward: 1700,
-    rightCarryForward: 0,
-    right_carry_forward: 0,
-    totalMatchedPV: 12800,
-    directReferralsCount: 4,
-    teamMembersCount: 15,
-    active: true,
-    status: 'active',
-    placementLocked: true
-  },
-  {
-    id: 'GBD000002',
-    member_id: 'GBD000002',
-    userId: 'usr-leader-001',
-    fullName: 'তাহমিনা আক্তার',
-    full_name: 'তাহমিনা আক্তার',
-    mobile: '01711223344',
-    email: 'tahmina@ghorerbazarbd.com',
-    joinDate: '2026-01-05',
-    created_at: '2026-01-05T00:00:00.000Z',
-    rank: 'senior_team_leader',
-    packageId: 'pkg-500',
-    packageName: 'ফাউন্ডার প্রিমিয়াম (500 PV)',
-    placementLeg: 'left',
-    position: 'LEFT',
-    sponsorId: 'GBD000001',
-    sponsor_id: 'GBD000001',
-    sponsorName: 'Company Master (GBD000001)',
-    parentId: 'GBD000001',
-    parent_id: 'GBD000001',
-    binaryParentId: 'GBD000001',
-    binary_parent_id: 'GBD000001',
-    placementId: 'GBD000001',
-    placement_id: 'GBD000001',
-    mentorLeader: 'Company Master',
-    memberType: 'Personal',
-    member_type: 'Personal',
-    leftChildId: 'GBD000004',
-    rightChildId: 'GBD000005',
-    pv: 500,
-    personal_pv: 500,
-    leftPV: 7200,
-    left_pv: 7200,
-    rightPV: 6800,
-    right_pv: 6800,
-    leftCarryForward: 400,
-    left_carry_forward: 400,
-    rightCarryForward: 0,
-    right_carry_forward: 0,
-    totalMatchedPV: 6800,
-    directReferralsCount: 2,
-    teamMembersCount: 7,
-    active: true,
-    status: 'active',
-    placementLocked: true
-  },
-  {
-    id: 'GBD000003',
-    member_id: 'GBD000003',
-    userId: 'usr-leader-002',
-    fullName: 'ইঞ্জিনিয়ার তানভীর আহমেদ',
-    full_name: 'ইঞ্জিনিয়ার তানভীর আহমেদ',
-    mobile: '01811223344',
-    email: 'tanveer@ghorerbazarbd.com',
-    joinDate: '2026-01-08',
-    created_at: '2026-01-08T00:00:00.000Z',
-    rank: 'team_leader',
-    packageId: 'pkg-400',
-    packageName: 'ডাইরেক্টর ক্লাব (400 PV)',
-    placementLeg: 'right',
-    position: 'RIGHT',
-    sponsorId: 'GBD000001',
-    sponsor_id: 'GBD000001',
-    sponsorName: 'Company Master (GBD000001)',
-    parentId: 'GBD000001',
-    parent_id: 'GBD000001',
-    binaryParentId: 'GBD000001',
-    binary_parent_id: 'GBD000001',
-    placementId: 'GBD000001',
-    placement_id: 'GBD000001',
-    mentorLeader: 'Company Master',
-    memberType: 'Personal',
-    member_type: 'Personal',
-    leftChildId: 'GBD000006',
-    rightChildId: 'GBD000007',
-    pv: 700,
-    personal_pv: 700,
-    leftPV: 6200,
-    left_pv: 6200,
-    rightPV: 6200,
-    right_pv: 6200,
-    leftCarryForward: 0,
-    left_carry_forward: 0,
-    rightCarryForward: 0,
-    right_carry_forward: 0,
-    totalMatchedPV: 6200,
-    directReferralsCount: 2,
-    teamMembersCount: 7,
-    active: true,
-    status: 'active',
-    placementLocked: true
-  },
-  {
-    id: 'GBD000004',
-    member_id: 'GBD000004',
-    userId: 'usr-member-003',
-    fullName: 'মাহমুদুল হাসান',
-    full_name: 'মাহমুদুল হাসান',
-    mobile: '01911223344',
-    email: 'mahmud@ghorerbazarbd.com',
-    joinDate: '2026-01-12',
-    created_at: '2026-01-12T00:00:00.000Z',
-    rank: 'senior_network_member',
-    packageId: 'pkg-300',
-    packageName: 'বিজনেস প্রাইম (300 PV)',
-    placementLeg: 'left',
-    position: 'LEFT',
-    sponsorId: 'GBD000002',
-    sponsor_id: 'GBD000002',
-    sponsorName: 'তাহমিনা আক্তার',
-    parentId: 'GBD000002',
-    parent_id: 'GBD000002',
-    binaryParentId: 'GBD000002',
-    binary_parent_id: 'GBD000002',
-    placementId: 'GBD000002',
-    placement_id: 'GBD000002',
-    mentorLeader: 'তাহমিনা আক্তার',
-    memberType: 'Personal',
-    member_type: 'Personal',
-    leftChildId: 'GBD000008',
-    rightChildId: 'GBD000009',
-    pv: 300,
-    personal_pv: 300,
-    leftPV: 3500,
-    left_pv: 3500,
-    rightPV: 3100,
-    right_pv: 3100,
-    leftCarryForward: 400,
-    left_carry_forward: 400,
-    rightCarryForward: 0,
-    right_carry_forward: 0,
-    totalMatchedPV: 3100,
-    directReferralsCount: 2,
-    teamMembersCount: 3,
-    active: true,
-    status: 'active',
-    placementLocked: true
-  },
-  {
-    id: 'GBD000005',
-    member_id: 'GBD000005',
-    userId: 'usr-member-004',
-    fullName: 'হাসান পারভেজ (Spillover)',
-    full_name: 'হাসান পারভেজ (Spillover)',
-    mobile: '01611223344',
-    email: 'parvez@ghorerbazarbd.com',
-    joinDate: '2026-01-15',
-    created_at: '2026-01-15T00:00:00.000Z',
-    rank: 'senior_network_member',
-    packageId: 'pkg-300',
-    packageName: 'বিজনেস প্রাইম (300 PV)',
-    placementLeg: 'right',
-    position: 'RIGHT',
-    sponsorId: 'GBD000001', // Sponsored directly by Company Master GBD000001 (Sponsor != Placement Parent!)
-    sponsor_id: 'GBD000001',
-    sponsorName: 'Company Master (GBD000001)',
-    parentId: 'GBD000002', // Placed under Tahmina's Right Leg (Spillover)
-    parent_id: 'GBD000002',
-    binaryParentId: 'GBD000002',
-    binary_parent_id: 'GBD000002',
-    placementId: 'GBD000002',
-    placement_id: 'GBD000002',
-    mentorLeader: 'Company Master',
-    memberType: 'Personal',
-    member_type: 'Personal',
-    leftChildId: 'GBD000010',
-    rightChildId: 'GBD000011',
-    pv: 300,
-    personal_pv: 300,
-    leftPV: 2500,
-    left_pv: 2500,
-    rightPV: 2100,
-    right_pv: 2100,
-    leftCarryForward: 400,
-    left_carry_forward: 400,
-    rightCarryForward: 0,
-    right_carry_forward: 0,
-    totalMatchedPV: 2100,
-    directReferralsCount: 1,
-    teamMembersCount: 3,
-    active: true,
-    status: 'active',
-    placementLocked: true
-  },
-  {
-    id: 'GBD000006',
-    member_id: 'GBD000006',
-    userId: 'usr-member-005',
-    fullName: 'নুসরাত জাহান',
-    full_name: 'নুসরাত জাহান',
-    mobile: '01511223344',
-    email: 'nusrat@ghorerbazarbd.com',
-    joinDate: '2026-01-18',
-    created_at: '2026-01-18T00:00:00.000Z',
-    rank: 'network_member',
-    packageId: 'pkg-200',
-    packageName: 'এক্সিকিউটিভ মেম্বার (200 PV)',
-    placementLeg: 'left',
-    position: 'LEFT',
-    sponsorId: 'GBD000003',
-    sponsor_id: 'GBD000003',
-    sponsorName: 'ইঞ্জিনিয়ার তানভীর আহমেদ',
-    parentId: 'GBD000003',
-    parent_id: 'GBD000003',
-    binaryParentId: 'GBD000003',
-    binary_parent_id: 'GBD000003',
-    placementId: 'GBD000003',
-    placement_id: 'GBD000003',
-    mentorLeader: 'ইঞ্জিনিয়ার তানভীর আহমেদ',
-    memberType: 'Personal',
-    member_type: 'Personal',
-    leftChildId: 'GBD000012',
-    rightChildId: 'GBD000013',
-    pv: 200,
-    personal_pv: 200,
-    leftPV: 2800,
-    left_pv: 2800,
-    rightPV: 2500,
-    right_pv: 2500,
-    leftCarryForward: 300,
-    left_carry_forward: 300,
-    rightCarryForward: 0,
-    right_carry_forward: 0,
-    totalMatchedPV: 2500,
-    directReferralsCount: 2,
-    teamMembersCount: 3,
-    active: true,
-    status: 'active',
-    placementLocked: true
-  },
-  {
-    id: 'GBD000007',
-    member_id: 'GBD000007',
-    userId: 'usr-member-006',
-    fullName: 'সাকিব আল হাসান (Spillover)',
-    full_name: 'সাকিব আল হাসান (Spillover)',
-    mobile: '01799887766',
-    email: 'sakib@ghorerbazarbd.com',
-    joinDate: '2026-01-20',
-    created_at: '2026-01-20T00:00:00.000Z',
-    rank: 'network_member',
-    packageId: 'pkg-200',
-    packageName: 'এক্সিকিউটিভ মেম্বার (200 PV)',
-    placementLeg: 'right',
-    position: 'RIGHT',
-    sponsorId: 'GBD000001', // Direct Referrer is Company Root GBD000001
-    sponsor_id: 'GBD000001',
-    sponsorName: 'Company Master (GBD000001)',
-    parentId: 'GBD000003', // Binary Placement is Under Tanveer's Right Leg (Spillover)
-    parent_id: 'GBD000003',
-    binaryParentId: 'GBD000003',
-    binary_parent_id: 'GBD000003',
-    placementId: 'GBD000003',
-    placement_id: 'GBD000003',
-    mentorLeader: 'Company Master',
-    memberType: 'Personal',
-    member_type: 'Personal',
-    leftChildId: 'GBD000014',
-    rightChildId: 'GBD000015',
-    pv: 200,
-    personal_pv: 200,
-    leftPV: 2600,
-    left_pv: 2600,
-    rightPV: 2600,
-    right_pv: 2600,
-    leftCarryForward: 0,
-    left_carry_forward: 0,
-    rightCarryForward: 0,
-    right_carry_forward: 0,
-    totalMatchedPV: 2600,
-    directReferralsCount: 1,
-    teamMembersCount: 3,
-    active: true,
-    status: 'active',
-    placementLocked: true
-  },
-  {
-    id: 'GBD000008',
-    member_id: 'GBD000008',
-    userId: 'usr-cust-001',
-    fullName: 'মো: আরিফুল ইসলাম',
-    full_name: 'মো: আরিফুল ইসলাম',
-    mobile: '01711998877',
-    email: 'ariful@gmail.com',
-    joinDate: '2026-02-01',
-    created_at: '2026-02-01T00:00:00.000Z',
-    rank: 'network_member',
-    packageId: 'pkg-100',
-    packageName: 'স্টার্টার মেম্বার (100 PV)',
-    placementLeg: 'left',
-    position: 'LEFT',
-    sponsorId: 'GBD000004',
-    sponsor_id: 'GBD000004',
-    sponsorName: 'মাহমুদুল হাসান',
-    parentId: 'GBD000004',
-    parent_id: 'GBD000004',
-    binaryParentId: 'GBD000004',
-    binary_parent_id: 'GBD000004',
-    placementId: 'GBD000004',
-    placement_id: 'GBD000004',
-    mentorLeader: 'মাহমুদুল হাসান',
-    memberType: 'Personal',
-    member_type: 'Personal',
-    leftChildId: undefined,
-    rightChildId: undefined,
-    pv: 100,
-    personal_pv: 100,
-    leftPV: 1200,
-    left_pv: 1200,
-    rightPV: 800,
-    right_pv: 800,
-    leftCarryForward: 400,
-    left_carry_forward: 400,
-    rightCarryForward: 0,
-    right_carry_forward: 0,
-    totalMatchedPV: 800,
-    directReferralsCount: 0,
-    teamMembersCount: 1,
-    active: true,
-    status: 'active',
-    placementLocked: true
-  },
-  {
-    id: 'GBD000009',
-    member_id: 'GBD000009',
-    userId: 'usr-cust-002',
-    fullName: 'রাশেদুল করিম',
-    full_name: 'রাশেদুল করিম',
-    mobile: '01822334455',
-    email: 'rashedul@gmail.com',
-    joinDate: '2026-02-05',
-    created_at: '2026-02-05T00:00:00.000Z',
-    rank: 'network_member',
-    packageId: 'pkg-200',
-    packageName: 'এক্সিকিউটিভ মেম্বার (200 PV)',
-    placementLeg: 'right',
-    position: 'RIGHT',
-    sponsorId: 'GBD000004',
-    sponsor_id: 'GBD000004',
-    sponsorName: 'মাহমুদুল হাসান',
-    parentId: 'GBD000004',
-    parent_id: 'GBD000004',
-    binaryParentId: 'GBD000004',
-    binary_parent_id: 'GBD000004',
-    placementId: 'GBD000004',
-    placement_id: 'GBD000004',
-    mentorLeader: 'মাহমুদুল হাসান',
-    memberType: 'Personal',
-    member_type: 'Personal',
-    leftChildId: undefined,
-    rightChildId: undefined,
-    pv: 200,
-    personal_pv: 200,
-    leftPV: 900,
-    left_pv: 900,
-    rightPV: 700,
-    right_pv: 700,
-    leftCarryForward: 200,
-    left_carry_forward: 200,
-    rightCarryForward: 0,
-    right_carry_forward: 0,
-    totalMatchedPV: 700,
-    directReferralsCount: 0,
-    teamMembersCount: 1,
-    active: true,
-    status: 'active',
-    placementLocked: true
-  },
-  {
-    id: 'GBD000010',
-    member_id: 'GBD000010',
-    userId: 'usr-cust-003',
-    fullName: 'ফারজানা ইয়াসমিন',
-    full_name: 'ফারজানা ইয়াসমিন',
-    mobile: '01933445566',
-    email: 'farzana@gmail.com',
-    joinDate: '2026-02-08',
-    created_at: '2026-02-08T00:00:00.000Z',
-    rank: 'senior_network_member',
-    packageId: 'pkg-300',
-    packageName: 'বিজনেস প্রাইম (300 PV)',
-    placementLeg: 'left',
-    position: 'LEFT',
-    sponsorId: 'GBD000005',
-    sponsor_id: 'GBD000005',
-    sponsorName: 'হাসান পারভেজ',
-    parentId: 'GBD000005',
-    parent_id: 'GBD000005',
-    binaryParentId: 'GBD000005',
-    binary_parent_id: 'GBD000005',
-    placementId: 'GBD000005',
-    placement_id: 'GBD000005',
-    mentorLeader: 'হাসান পারভেজ',
-    memberType: 'Personal',
-    member_type: 'Personal',
-    leftChildId: undefined,
-    rightChildId: undefined,
-    pv: 300,
-    personal_pv: 300,
-    leftPV: 1000,
-    left_pv: 1000,
-    rightPV: 1000,
-    right_pv: 1000,
-    leftCarryForward: 0,
-    left_carry_forward: 0,
-    rightCarryForward: 0,
-    right_carry_forward: 0,
-    totalMatchedPV: 1000,
-    directReferralsCount: 0,
-    teamMembersCount: 1,
-    active: true,
-    status: 'active',
-    placementLocked: true
-  },
-  {
-    id: 'GBD000011',
-    member_id: 'GBD000011',
-    userId: 'usr-cust-004',
-    fullName: 'কামাল হোসেন (Spillover)',
-    full_name: 'কামাল হোসেন (Spillover)',
-    mobile: '01644556677',
-    email: 'kamal@gmail.com',
-    joinDate: '2026-02-12',
-    created_at: '2026-02-12T00:00:00.000Z',
-    rank: 'network_member',
-    packageId: 'pkg-100',
-    packageName: 'স্টার্টার মেম্বার (100 PV)',
-    placementLeg: 'right',
-    position: 'RIGHT',
-    sponsorId: 'GBD000002', // Direct sponsor is Tahmina Akter GBD000002
-    sponsor_id: 'GBD000002',
-    sponsorName: 'তাহমিনা আক্তার',
-    parentId: 'GBD000005', // Binary parent is Hasan Parvez
-    parent_id: 'GBD000005',
-    binaryParentId: 'GBD000005',
-    binary_parent_id: 'GBD000005',
-    placementId: 'GBD000005',
-    placement_id: 'GBD000005',
-    mentorLeader: 'তাহমিনা আক্তার',
-    memberType: 'Personal',
-    member_type: 'Personal',
-    leftChildId: undefined,
-    rightChildId: undefined,
-    pv: 100,
-    personal_pv: 100,
-    leftPV: 500,
-    left_pv: 500,
-    rightPV: 400,
-    right_pv: 400,
-    leftCarryForward: 100,
-    left_carry_forward: 100,
-    rightCarryForward: 0,
-    right_carry_forward: 0,
-    totalMatchedPV: 400,
-    directReferralsCount: 0,
-    teamMembersCount: 1,
-    active: true,
-    status: 'active',
-    placementLocked: true
-  },
-  {
-    id: 'GBD000012',
-    member_id: 'GBD000012',
-    userId: 'usr-cust-005',
-    fullName: 'সাবরিনা সুলতানা',
-    full_name: 'সাবরিনা সুলতানা',
-    mobile: '01555667788',
-    email: 'sabrina@gmail.com',
-    joinDate: '2026-02-15',
-    created_at: '2026-02-15T00:00:00.000Z',
-    rank: 'network_member',
-    packageId: 'pkg-200',
-    packageName: 'এক্সিকিউটিভ মেম্বার (200 PV)',
-    placementLeg: 'left',
-    position: 'LEFT',
-    sponsorId: 'GBD000006',
-    sponsor_id: 'GBD000006',
-    sponsorName: 'নুসরাত জাহান',
-    parentId: 'GBD000006',
-    parent_id: 'GBD000006',
-    binaryParentId: 'GBD000006',
-    binary_parent_id: 'GBD000006',
-    placementId: 'GBD000006',
-    placement_id: 'GBD000006',
-    mentorLeader: 'নুসরাত জাহান',
-    memberType: 'Personal',
-    member_type: 'Personal',
-    leftChildId: undefined,
-    rightChildId: undefined,
-    pv: 200,
-    personal_pv: 200,
-    leftPV: 600,
-    left_pv: 600,
-    rightPV: 600,
-    right_pv: 600,
-    leftCarryForward: 0,
-    left_carry_forward: 0,
-    rightCarryForward: 0,
-    right_carry_forward: 0,
-    totalMatchedPV: 600,
-    directReferralsCount: 0,
-    teamMembersCount: 1,
-    active: false, // Inactive member for testing filters
-    status: 'inactive',
-    placementLocked: true
-  },
-  {
-    id: 'GBD000013',
-    member_id: 'GBD000013',
-    userId: 'usr-cust-006',
-    fullName: 'নাজমুল হুদা',
-    full_name: 'নাজমুল হুদা',
-    mobile: '01766778899',
-    email: 'nazmul@gmail.com',
-    joinDate: '2026-02-18',
-    created_at: '2026-02-18T00:00:00.000Z',
-    rank: 'network_member',
-    packageId: 'pkg-100',
-    packageName: 'স্টার্টার মেম্বার (100 PV)',
-    placementLeg: 'right',
-    position: 'RIGHT',
-    sponsorId: 'GBD000003',
-    sponsor_id: 'GBD000003',
-    sponsorName: 'ইঞ্জিনিয়ার তানভীর আহমেদ',
-    parentId: 'GBD000006',
-    parent_id: 'GBD000006',
-    binaryParentId: 'GBD000006',
-    binary_parent_id: 'GBD000006',
-    placementId: 'GBD000006',
-    placement_id: 'GBD000006',
-    mentorLeader: 'ইঞ্জিনিয়ার তানভীর আহমেদ',
-    memberType: 'Personal',
-    member_type: 'Personal',
-    leftChildId: undefined,
-    rightChildId: undefined,
-    pv: 100,
-    personal_pv: 100,
-    leftPV: 400,
-    left_pv: 400,
-    rightPV: 200,
-    right_pv: 200,
-    leftCarryForward: 200,
-    left_carry_forward: 200,
-    rightCarryForward: 0,
-    right_carry_forward: 0,
-    totalMatchedPV: 200,
-    directReferralsCount: 0,
-    teamMembersCount: 1,
-    active: true,
-    status: 'active',
-    placementLocked: true
-  },
-  {
-    id: 'GBD000014',
-    member_id: 'GBD000014',
-    userId: 'usr-cust-007',
-    fullName: 'তানভীর হাসান',
-    full_name: 'তানভীর হাসান',
-    mobile: '01877889900',
-    email: 'tanvir.hasan@gmail.com',
-    joinDate: '2026-02-22',
-    created_at: '2026-02-22T00:00:00.000Z',
-    rank: 'network_member',
-    packageId: 'pkg-200',
-    packageName: 'এক্সিকিউটিভ মেম্বার (200 PV)',
-    placementLeg: 'left',
-    position: 'LEFT',
-    sponsorId: 'GBD000007',
-    sponsor_id: 'GBD000007',
-    sponsorName: 'সাকিব আল হাসান',
-    parentId: 'GBD000007',
-    parent_id: 'GBD000007',
-    binaryParentId: 'GBD000007',
-    binary_parent_id: 'GBD000007',
-    placementId: 'GBD000007',
-    placement_id: 'GBD000007',
-    mentorLeader: 'সাকিব আল হাসান',
-    memberType: 'Personal',
-    member_type: 'Personal',
-    leftChildId: undefined,
-    rightChildId: undefined,
-    pv: 200,
-    personal_pv: 200,
-    leftPV: 800,
-    left_pv: 800,
-    rightPV: 800,
-    right_pv: 800,
-    leftCarryForward: 0,
-    left_carry_forward: 0,
-    rightCarryForward: 0,
-    right_carry_forward: 0,
-    totalMatchedPV: 800,
-    directReferralsCount: 0,
-    teamMembersCount: 1,
-    active: true,
-    status: 'active',
-    placementLocked: true
-  },
-  {
-    id: 'GBD000015',
-    member_id: 'GBD000015',
-    userId: 'usr-cust-008',
-    fullName: 'মেহেদী হাসান (Spillover)',
-    full_name: 'মেহেদী হাসান (Spillover)',
-    mobile: '01988990011',
-    email: 'mehedi@gmail.com',
-    joinDate: '2026-02-25',
-    created_at: '2026-02-25T00:00:00.000Z',
-    rank: 'network_member',
-    packageId: 'pkg-100',
-    packageName: 'স্টার্টার মেম্বার (100 PV)',
-    placementLeg: 'right',
-    position: 'RIGHT',
-    sponsorId: 'GBD000001', // Direct sponsor is Company Master GBD000001
-    sponsor_id: 'GBD000001',
-    sponsorName: 'Company Master (GBD000001)',
-    parentId: 'GBD000007',
-    parent_id: 'GBD000007',
-    binaryParentId: 'GBD000007',
-    binary_parent_id: 'GBD000007',
-    placementId: 'GBD000007',
-    placement_id: 'GBD000007',
-    mentorLeader: 'Company Master',
-    memberType: 'Personal',
-    member_type: 'Personal',
-    leftChildId: undefined,
-    rightChildId: undefined,
-    pv: 100,
-    personal_pv: 100,
-    leftPV: 300,
-    left_pv: 300,
-    rightPV: 300,
-    right_pv: 300,
-    leftCarryForward: 0,
-    left_carry_forward: 0,
-    rightCarryForward: 0,
-    right_carry_forward: 0,
-    totalMatchedPV: 300,
-    directReferralsCount: 0,
-    teamMembersCount: 1,
-    active: true,
-    status: 'active',
-    placementLocked: true
-  }
-];
+const SEED_MEMBERS: NetworkMember[] = SEED_BINARY_MEMBERS;
 
 export const generateNextMemberId = (existingMembers: NetworkMember[]): string => {
   let maxNum = 1;
   existingMembers.forEach((m) => {
-    if (m.id) {
-      const clean = m.id.toUpperCase().trim();
-      if (clean.startsWith('GBD')) {
-        const num = parseInt(clean.replace('GBD', ''), 10);
-        if (!isNaN(num) && num > maxNum) {
-          maxNum = num;
-        }
-      } else if (clean.startsWith('TMK')) {
-        const num = parseInt(clean.replace('TMK', ''), 10);
-        if (!isNaN(num) && num > maxNum) {
-          maxNum = num;
-        }
-      }
-    }
+    const num = parseBinaryCompanyIdSeq(m.id);
+    if (num > maxNum) maxNum = num;
   });
-  return `GBD${(maxNum + 1).toString().padStart(6, '0')}`;
+  return formatBinaryCompanyId(maxNum + 1);
 };
-
-// Initial Immutable Matching Records for Historical Audit
-export const INITIAL_MATCHING_HISTORY: MatchingRecord[] = [
-  {
-    matching_id: 'MATCH-2026-001',
-    member_id: 'GBD000001',
-    member_name: 'Company Master (GBD000001)',
-    left_pv: 14500,
-    right_pv: 12800,
-    matched_pv: 12800,
-    left_carry_forward: 1700,
-    right_carry_forward: 0,
-    matching_date: '2026-08-01',
-    created_by: 'SYSTEM_ENGINE',
-    created_at: '2026-08-01T23:59:59.000Z',
-    notes: 'অটোমেটেড ডেইলি বাইনারি ম্যাচিং সাইকেল ১'
-  },
-  {
-    matching_id: 'MATCH-2026-002',
-    member_id: 'GBD000002',
-    member_name: 'তাহমিনা আক্তার',
-    left_pv: 7200,
-    right_pv: 6800,
-    matched_pv: 6800,
-    left_carry_forward: 400,
-    right_carry_forward: 0,
-    matching_date: '2026-08-01',
-    created_by: 'SYSTEM_ENGINE',
-    created_at: '2026-08-01T23:59:59.000Z',
-    notes: 'অটোমেটেড ডেইলি বাইনারি ম্যাচিং সাইকেল ১'
-  },
-  {
-    matching_id: 'MATCH-2026-003',
-    member_id: 'GBD000003',
-    member_name: 'ইঞ্জিনিয়ার তানভীর আহমেদ',
-    left_pv: 6200,
-    right_pv: 6200,
-    matched_pv: 6200,
-    left_carry_forward: 0,
-    right_carry_forward: 0,
-    matching_date: '2026-08-01',
-    created_by: 'SYSTEM_ENGINE',
-    created_at: '2026-08-01T23:59:59.000Z',
-    notes: 'পারফেক্ট দুই লেগ ব্যালেন্সড ম্যাচিং'
-  },
-  {
-    matching_id: 'MATCH-2026-004',
-    member_id: 'GBD000008',
-    member_name: 'মো: আরিফুল ইসলাম',
-    left_pv: 1200,
-    right_pv: 800,
-    matched_pv: 800,
-    left_carry_forward: 400,
-    right_carry_forward: 0,
-    matching_date: '2026-08-02',
-    created_by: 'AANO-SADMIN-001',
-    created_at: '2026-08-02T18:30:00.000Z',
-    notes: 'সুপার এডমিন ভেরিফাইড ম্যাচিং এক্সেকিউশন'
-  }
-];
 
 // Initial Transactions
 const INITIAL_TRANSACTIONS: WalletTransaction[] = [
@@ -1213,7 +476,11 @@ export interface PlacementRuleResult {
 
 interface NetworkMarketingContextType {
   members: NetworkMember[];
+  allTreeNodes: NetworkMember[];
+  blankPositions: NetworkMember[];
+  treeState: BinaryTreePersistenceState;
   currentMember: NetworkMember;
+  ownCompanyMemberId: string | null;
   isNetworkActive: boolean;
   packages: ActivationPackage[];
   ranks: RankRequirement[];
@@ -1225,6 +492,12 @@ interface NetworkMarketingContextType {
   reservedPlacements: ReservedSlot[];
   
   // Member & Tree Operations
+  getBlankSlotForParent: (parentId: string, leg: 'left' | 'right') => NetworkMember | undefined;
+  registerBlankSlotAtomic: (
+    params: BlankSlotRegistrationParams
+  ) => Promise<BlankSlotRegistrationResult & { sponsorName?: string; placementName?: string }>;
+  fetchIsolatedSubtree: (companyId: string) => Promise<IsolatedSubtreeApiResponse>;
+  refreshBinaryTreeFromServer: () => Promise<void>;
   activatePackage: (packageId: string) => void;
   addReservedSlot: (slot: Omit<ReservedSlot, 'id' | 'createdAt'>) => ReservedSlot;
   releaseReservedSlot: (parentMemberId: string, leg: 'left' | 'right') => void;
@@ -1293,16 +566,30 @@ interface NetworkMarketingContextType {
 const NetworkMarketingContext = createContext<NetworkMarketingContextType | undefined>(undefined);
 
 export const NetworkMarketingProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { currentUser, addAuditLog, systemSettings } = useAuth();
+  const { currentUser, activeRole, isLoggedIn, addAuditLog, systemSettings } = useAuth();
   const { addNotification } = useNotifications();
 
-  const [members, setMembers] = useState<NetworkMember[]>(() => {
+  const [treeState, setTreeState] = useState<BinaryTreePersistenceState>(() => {
     try {
-      const saved = localStorage.getItem('aponbazar_network_members') || localStorage.getItem('tomshopbd_network_members');
+      const savedFull = localStorage.getItem('aponbazar_binary_tree_state');
+      if (savedFull) {
+        const parsedState = JSON.parse(savedFull) as BinaryTreePersistenceState;
+        if (parsedState && Array.isArray(parsedState.nodes) && parsedState.nodes.length > 0) {
+          return reconcileBinaryTreeState(
+            parsedState.nodes,
+            parsedState.lastCompanySeq || 15,
+            parsedState.allocatedIds || {},
+            parsedState.version || 1
+          );
+        }
+      }
+
+      const saved =
+        localStorage.getItem('aponbazar_network_members') ||
+        localStorage.getItem('tomshopbd_network_members');
       if (saved) {
         let parsed: NetworkMember[] = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          // If stored records still have old TMK IDs, migrate them to GBD
           const hasGbdRoot = parsed.some((m) => m.id === 'GBD000001');
           if (!hasGbdRoot) {
             parsed = parsed.map((m) => ({
@@ -1324,24 +611,165 @@ export const NetworkMarketingProvider: React.FC<{ children: React.ReactNode }> =
               parsed = SEED_MEMBERS;
             }
           }
-          return parsed;
+          return reconcileBinaryTreeState(parsed, 15, {}, 1);
         }
       }
     } catch (e) {
-      console.error('Error loading members from localStorage', e);
+      console.error('Error loading binary tree state from localStorage', e);
     }
-    return SEED_MEMBERS;
+    return reconcileBinaryTreeState(SEED_MEMBERS, 15, {}, 1);
   });
 
-  // Sync members to localStorage whenever updated
+  const allTreeNodes = treeState.nodes;
+  const members = React.useMemo(
+    () => treeState.nodes.filter((n) => n.nodeStatus !== 'blank'),
+    [treeState.nodes]
+  );
+  const blankPositions = React.useMemo(
+    () => treeState.nodes.filter((n) => n.nodeStatus === 'blank'),
+    [treeState.nodes]
+  );
+
+  // Compatibility setter ensuring every tree mutation preserves Left & Right blank slots
+  const setMembers = (updater: React.SetStateAction<NetworkMember[]>) => {
+    setTreeState((prev) => {
+      const currentRegistered = prev.nodes.filter((n) => n.nodeStatus !== 'blank');
+      const nextRegistered =
+        typeof updater === 'function' ? updater(currentRegistered) : updater;
+      const existingBlanks = prev.nodes.filter((n) => n.nodeStatus === 'blank');
+      return reconcileBinaryTreeState(
+        [...nextRegistered, ...existingBlanks],
+        prev.lastCompanySeq,
+        prev.allocatedIds,
+        prev.version + 1
+      );
+    });
+  };
+
+  // Sync treeState & registered members cache to localStorage whenever updated
   useEffect(() => {
     try {
+      localStorage.setItem('aponbazar_binary_tree_state', JSON.stringify(treeState));
       localStorage.setItem('aponbazar_network_members', JSON.stringify(members));
       localStorage.setItem('tomshopbd_network_members', JSON.stringify(members));
     } catch (e) {
-      console.error('Error saving members to localStorage', e);
+      console.error('Error saving binary tree state to localStorage', e);
     }
-  }, [members]);
+  }, [treeState, members]);
+
+  const refreshBinaryTreeFromServer = async () => {
+    try {
+      const resp = await fetch('/api/network/tree');
+      if (!resp.ok) return;
+      const json = await resp.json();
+      if (json?.success && json.treeState?.nodes?.length > 0) {
+        setTreeState(json.treeState);
+        if (Array.isArray(json.matchingHistory) && json.matchingHistory.length > 0) {
+          setMatchingHistory(json.matchingHistory);
+        }
+      }
+    } catch (err) {
+      console.warn('[BinaryTree] Using cached local tree state (server unreachable):', err);
+    }
+  };
+
+  const fetchIsolatedSubtree = async (companyId: string): Promise<IsolatedSubtreeApiResponse> => {
+    const cleanId = (companyId || '').trim();
+    if (!cleanId) {
+      return {
+        success: false,
+        statusCode: 400,
+        errorCode: 'INVALID_INPUT',
+        message: 'অনুগ্রহ করে একটি বৈধ Company ID লিখুন।'
+      };
+    }
+
+    const effectiveRole = (activeRole || currentUser?.primaryRole || 'customer').toLowerCase();
+    const effectiveUserId = isLoggedIn ? (currentUser?.id || 'guest') : 'guest';
+    const resolvedOwnerId =
+      currentUser?.binaryCompanyId ||
+      allTreeNodes.find((n) => n.nodeStatus !== 'blank' && n.userId === effectiveUserId)?.id ||
+      (effectiveUserId === 'usr-network-07' ? 'GBD000002' : '');
+
+    try {
+      const resp = await fetch(`/api/network/tree/subtree/${encodeURIComponent(cleanId)}`, {
+        method: 'GET',
+        cache: 'no-store',
+        headers: {
+          'x-user-role': effectiveRole,
+          'x-user-id': effectiveUserId,
+          'x-company-id': resolvedOwnerId
+        }
+      });
+      const json = (await resp.json()) as IsolatedSubtreeApiResponse;
+      return {
+        ...json,
+        statusCode: json?.statusCode || resp.status
+      };
+    } catch (err) {
+      // Offline / unreachable server fallback using strict identical RBAC + isolated subtree extraction
+      if (!isLoggedIn || effectiveUserId === 'guest') {
+        return {
+          success: false,
+          statusCode: 403,
+          errorCode: 'ACCESS_DENIED',
+          message: 'অননুমোদিত প্রবেশাধিকার (Access Denied): অনুগ্রহ করে লগইন করুন।'
+        };
+      }
+      const isAdmin = effectiveRole === 'super_admin' || effectiveRole === 'admin';
+      const targetNode = findBinaryTreeNodeById(allTreeNodes, cleanId);
+      if (!isAdmin) {
+        if (!resolvedOwnerId) {
+          return {
+            success: false,
+            statusCode: 403,
+            errorCode: 'ACCESS_DENIED',
+            message: 'Access Denied: আপনার অ্যাকাউন্টের সাথে কোনো অনুমোদিত Company ID যুক্ত নেই।'
+          };
+        }
+        if (!targetNode) {
+          return {
+            success: false,
+            statusCode: 404,
+            errorCode: 'NOT_FOUND',
+            message: `Company ID '${cleanId}' ডাটাবেজে পাওয়া যায়নি (Not Found)।`
+          };
+        }
+        if (!isCompanyIdInSubtree(allTreeNodes, resolvedOwnerId, targetNode.id)) {
+          return {
+            success: false,
+            statusCode: 403,
+            errorCode: 'ACCESS_DENIED',
+            message: `Access Denied: আপনি শুধুমাত্র আপনার নিজের Company ID (${resolvedOwnerId}) এবং এর অধীনস্থ ডাউনলাইন নেটওয়ার্ক দেখতে পারবেন।`
+          };
+        }
+      }
+      const extraction = extractIsolatedBinarySubtree(allTreeNodes, cleanId);
+      if (!extraction.found || !extraction.rootNode || !extraction.stats) {
+        return {
+          success: false,
+          statusCode: 404,
+          errorCode: 'NOT_FOUND',
+          message: `Company ID '${cleanId}' ডাটাবেজে পাওয়া যায়নি (Not Found)।`
+        };
+      }
+      return {
+        success: true,
+        statusCode: 200,
+        message: `Isolated binary subtree loaded for ${extraction.rootId}.`,
+        rootId: extraction.rootId,
+        rootNode: extraction.rootNode,
+        nodes: extraction.nodes,
+        stats: extraction.stats,
+        authorizedScope: isAdmin ? 'admin_full' : 'member_subtree'
+      };
+    }
+  };
+
+  // Hydrate authoritative tree state from Express persistent store on mount
+  useEffect(() => {
+    refreshBinaryTreeFromServer();
+  }, []);
 
   // Immutable Matching Transaction History Storage
   const [matchingHistory, setMatchingHistory] = useState<MatchingRecord[]>(() => {
@@ -1521,7 +949,17 @@ export const NetworkMarketingProvider: React.FC<{ children: React.ReactNode }> =
   };
 
   // Derive Current Logged-in Network Member & Active Status
-  const activeMemberMatch = currentUser ? members.find((m) => m.userId === currentUser.id) : undefined;
+  const activeMemberMatch = currentUser
+    ? members.find(
+        (m) =>
+          m.userId === currentUser.id ||
+          (currentUser.binaryCompanyId && m.id === currentUser.binaryCompanyId) ||
+          (currentUser.id === 'usr-network-07' && m.id === 'GBD000002') ||
+          ((currentUser.primaryRole === 'super_admin' || currentUser.primaryRole === 'admin') &&
+            m.id === COMPANY_MASTER_ROOT_ID)
+      )
+    : undefined;
+  const ownCompanyMemberId = activeMemberMatch?.id || currentUser?.binaryCompanyId || null;
   const isNetworkActive = !!(activeMemberMatch && activeMemberMatch.active);
 
   const currentMember = activeMemberMatch || members[1] || members[0];
@@ -1620,8 +1058,16 @@ export const NetworkMarketingProvider: React.FC<{ children: React.ReactNode }> =
     const query = sponsorIdOrCode.trim().toLowerCase();
 
     // Default company root sponsor alias handling
-    if (query === 'tmk000001' || query === 'mem-root' || query === 'company' || query === 'tomokary' || query === 'root' || query === 'mem-leader-top') {
-      return members.find((m) => m.id === 'TMK000001') || members[0];
+    if (
+      query === 'gbd000001' ||
+      query === 'tmk000001' ||
+      query === 'mem-root' ||
+      query === 'company' ||
+      query === 'tomokary' ||
+      query === 'root' ||
+      query === 'mem-leader-top'
+    ) {
+      return members.find((m) => m.id === COMPANY_MASTER_ROOT_ID) || members[0];
     }
 
     return members.find((m) => {
@@ -2010,6 +1456,84 @@ export const NetworkMarketingProvider: React.FC<{ children: React.ReactNode }> =
   };
 
   // ----------------------------------------------------------------------
+  // 1.75 Blank Position Lookup & Atomic Server Registration
+  // ----------------------------------------------------------------------
+  const getBlankSlotForParent = (parentId: string, leg: 'left' | 'right'): NetworkMember | undefined => {
+    const q = (parentId || '').trim().toLowerCase();
+    const parent = members.find(
+      (m) => m.id.toLowerCase() === q || (m.customerId && m.customerId.toLowerCase() === q)
+    );
+    const resolvedParentId = parent ? parent.id : parentId.trim();
+    return blankPositions.find(
+      (b) => b.parentId === resolvedParentId && (b.placementLeg || '').toLowerCase() === leg
+    );
+  };
+
+  const registerBlankSlotAtomic = async (
+    params: BlankSlotRegistrationParams
+  ): Promise<BlankSlotRegistrationResult & { sponsorName?: string; placementName?: string }> => {
+    const pkg = packages.find((p) => p.id === (params.packageId || 'pkg-100')) || packages[0];
+    const enrichedParams: BlankSlotRegistrationParams = {
+      ...params,
+      packageId: pkg.id,
+      packageName: params.packageName || pkg.nameBn,
+      pv: typeof params.pv === 'number' ? params.pv : pkg.pv
+    };
+
+    try {
+      const resp = await fetch('/api/network/blank-slot/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(enrichedParams)
+      });
+      const json = (await resp.json()) as BlankSlotRegistrationResult;
+      if (!resp.ok || !json.success) {
+        if (resp.status === 409) {
+          refreshBinaryTreeFromServer();
+        }
+        return {
+          success: false,
+          statusCode: resp.status || json.statusCode || 409,
+          message: json.message || 'বাইনারি Blank Position নিবন্ধন ব্যর্থ হয়েছে।'
+        };
+      }
+
+      if (json.state) {
+        setTreeState(json.state);
+      }
+      const registeredMember = json.registeredMember;
+      const sponsorNode = (json.state?.nodes || members).find((m) => m.id === registeredMember?.sponsorId);
+      const placementNode = (json.state?.nodes || members).find((m) => m.id === registeredMember?.parentId);
+
+      addNotification({
+        userId: params.userId,
+        title: 'সদস্যপদ ও ২ নতুন Blank Position তৈরি সম্পন্ন!',
+        message: `${params.fullName} (${registeredMember?.id}) সফলভাবে নিবন্ধিত হয়েছে এবং বাম (${json.newLeftBlank?.id}) ও ডান (${json.newRightBlank?.id}) Blank Position তৈরি হয়েছে!`,
+        channel: 'in_app'
+      });
+
+      return {
+        ...json,
+        sponsorName: sponsorNode?.fullName || params.sponsorName || COMPANY_MASTER_ROOT_ID,
+        placementName: placementNode?.fullName || registeredMember?.parentId || COMPANY_MASTER_ROOT_ID
+      };
+    } catch {
+      const localRes = executeAtomicBlankSlotRegistration(treeState, enrichedParams);
+      if (localRes.success && localRes.state) {
+        setTreeState(localRes.state);
+        const sponsorNode = localRes.state.nodes.find((m) => m.id === localRes.registeredMember?.sponsorId);
+        const placementNode = localRes.state.nodes.find((m) => m.id === localRes.registeredMember?.parentId);
+        return {
+          ...localRes,
+          sponsorName: sponsorNode?.fullName || params.sponsorName || COMPANY_MASTER_ROOT_ID,
+          placementName: placementNode?.fullName || localRes.registeredMember?.parentId || COMPANY_MASTER_ROOT_ID
+        };
+      }
+      return localRes;
+    }
+  };
+
+  // ----------------------------------------------------------------------
   // 1.8 Complete AI Automatic Referral and Placement Engine
   // ----------------------------------------------------------------------
   const executeNetworkActivationAndPlacement = (params: {
@@ -2045,26 +1569,21 @@ export const NetworkMarketingProvider: React.FC<{ children: React.ReactNode }> =
       placementIdInput,
       preferredLeg,
       packageId = 'pkg-100',
-      permanentMemberId: providedPermId,
       reservedSlot
     } = params;
 
-    const permMemberId = (providedPermId && (providedPermId.startsWith('TMK') || providedPermId.startsWith('CUST') || providedPermId.startsWith('TOM') || providedPermId.startsWith('DLR') || providedPermId.startsWith('GBD')))
-      ? providedPermId
-      : (customerId || generateNextMemberId(members));
-
     // Duplicate Placement Prevention
-    const existingInTree = members.find((m) => m.userId === userId || m.id === permMemberId);
+    const existingInTree = members.find((m) => m.userId === userId);
     if (existingInTree && existingInTree.parentId) {
       const parentNode = members.find((m) => m.id === existingInTree.parentId);
       return {
         success: false,
         message: 'ডুপ্লিকেট প্লেসমেন্ট প্রতিরোধ: ব্যবহারকারী ইতিমধ্যেই বাইনারি ট্রি-তে প্লেস করা আছে।',
         member: existingInTree,
-        referralCode: permMemberId,
-        referralLink: `${window.location.origin}/register?ref=${permMemberId}`,
-        sponsorId: existingInTree.sponsorId || 'TMK000001',
-        sponsorName: existingInTree.sponsorName || 'Tomokary',
+        referralCode: existingInTree.id,
+        referralLink: `${window.location.origin}/register?ref=${existingInTree.id}`,
+        sponsorId: existingInTree.sponsorId || COMPANY_MASTER_ROOT_ID,
+        sponsorName: existingInTree.sponsorName || 'Company Master (GBD000001)',
         placementId: existingInTree.parentId,
         placementName: parentNode?.fullName || 'Root Upline',
         placementLeg: existingInTree.placementLeg,
@@ -2072,7 +1591,6 @@ export const NetworkMarketingProvider: React.FC<{ children: React.ReactNode }> =
       };
     }
 
-    // Check reserved slot if not provided in params
     const activeReserved = reservedSlot || reservedPlacements.find((r) => r.userId === userId);
 
     let finalSponsorId: string;
@@ -2085,8 +1603,8 @@ export const NetworkMarketingProvider: React.FC<{ children: React.ReactNode }> =
     if (activeReserved) {
       const master = getCompanyMasterMember();
       const parentNode = members.find((m) => m.id === activeReserved.parentMemberId) || master;
-      finalSponsorId = sponsorIdInput ? (members.find(m => m.id === sponsorIdInput)?.id || master.id) : master.id;
-      finalSponsorName = members.find(m => m.id === finalSponsorId)?.fullName || master.fullName;
+      finalSponsorId = sponsorIdInput ? (findSponsor(sponsorIdInput)?.id || master.id) : master.id;
+      finalSponsorName = members.find((m) => m.id === finalSponsorId)?.fullName || master.fullName;
       finalPlacementId = parentNode.id;
       finalPlacementName = parentNode.fullName;
       finalPlacementLeg = activeReserved.leg;
@@ -2115,128 +1633,78 @@ export const NetworkMarketingProvider: React.FC<{ children: React.ReactNode }> =
       finalPositionText = ruleResult.positionText;
     }
 
-    // Circular Placement Prevention
-    if (finalPlacementId === permMemberId) {
+    const pkg = packages.find((p) => p.id === packageId) || packages[0];
+    const targetBlank = getBlankSlotForParent(finalPlacementId, finalPlacementLeg);
+    const atomicParams: BlankSlotRegistrationParams = {
+      reservedCompanyId: targetBlank?.id,
+      parentId: finalPlacementId,
+      leg: finalPlacementLeg,
+      userId,
+      username,
+      aponUniqueId: customerId,
+      fullName,
+      mobile,
+      email: email || `${mobile}@aponbazar.com`,
+      address,
+      registrationSource,
+      sponsorId: finalSponsorId,
+      sponsorName: finalSponsorName,
+      packageId: pkg.id,
+      packageName: pkg.nameBn,
+      pv: pkg.pv
+    };
+
+    const atomicRes = executeAtomicBlankSlotRegistration(treeState, atomicParams);
+    if (!atomicRes.success || !atomicRes.state || !atomicRes.registeredMember) {
       return {
         success: false,
-        message: 'সার্কুলার প্লেসমেন্ট প্রতিরোধ: একই সদস্য নিজের প্লেসমেন্ট অভিভাবক হতে পারে না।',
+        message: atomicRes.message,
         referralCode: '',
         referralLink: '',
-        sponsorId: '',
-        sponsorName: '',
-        placementId: '',
-        placementName: '',
-        placementLeg: 'right',
-        binaryPositionText: 'সার্কুলার ত্রুটি'
+        sponsorId: finalSponsorId,
+        sponsorName: finalSponsorName,
+        placementId: finalPlacementId,
+        placementName: finalPlacementName,
+        placementLeg: finalPlacementLeg,
+        binaryPositionText: finalPositionText
       };
     }
 
-    // Target Parent Slot Occupied Prevention
-    const targetParent = members.find((m) => m.id === finalPlacementId);
-    if (targetParent) {
-      if (finalPlacementLeg === 'left' && targetParent.leftChildId) {
-        return {
-          success: false,
-          message: `This placement position (Left) under ${targetParent.id} is already occupied. Please select an empty position or choose another Placement ID.`,
-          referralCode: '',
-          referralLink: '',
-          sponsorId: finalSponsorId,
-          sponsorName: finalSponsorName,
-          placementId: finalPlacementId,
-          placementName: finalPlacementName,
-          placementLeg: finalPlacementLeg,
-          binaryPositionText: finalPositionText
-        };
-      }
-      if (finalPlacementLeg === 'right' && targetParent.rightChildId) {
-        return {
-          success: false,
-          message: `This placement position (Right) under ${targetParent.id} is already occupied. Please select an empty position or choose another Placement ID.`,
-          referralCode: '',
-          referralLink: '',
-          sponsorId: finalSponsorId,
-          sponsorName: finalSponsorName,
-          placementId: finalPlacementId,
-          placementName: finalPlacementName,
-          placementLeg: finalPlacementLeg,
-          binaryPositionText: finalPositionText
-        };
-      }
-    }
+    setTreeState(atomicRes.state);
 
-    const pkg = packages.find((p) => p.id === packageId) || packages[0];
-
-    // Build New Member Node
-    const newNetworkMember: NetworkMember = {
-      id: permMemberId,
-      userId: userId,
-      username: username,
-      customerId: customerId || permMemberId,
-      fullName: fullName,
-      mobile: mobile,
-      email: email || `${mobile}@tomshopbd.com`,
-      address: address,
-      registrationSource: registrationSource,
-      joinDate: new Date().toISOString().substring(0, 10),
-      rank: 'network_member',
-      idGrade: calculateIdGrade(pkg.pv),
-      packageId: pkg.id,
-      packageName: pkg.nameBn,
-      sponsorId: finalSponsorId,
-      sponsorName: finalSponsorName,
-      parentId: finalPlacementId,
-      binaryParentId: finalPlacementId,
-      binary_parent_id: finalPlacementId,
-      placementLeg: finalPlacementLeg,
-      position: finalPlacementLeg,
-      pv: pkg.pv,
-      leftPV: 0,
-      rightPV: 0,
-      leftCarryForward: 0,
-      rightCarryForward: 0,
-      totalMatchedPV: 0,
-      directReferralsCount: 0,
-      teamMembersCount: 0,
-      active: true,
-      placementLocked: true
-    };
-
-    // Update Tree State
-    setMembers((prev) => {
-      const updated = prev.map((m) => {
-        if (m.id === finalPlacementId) {
-          return finalPlacementLeg === 'left'
-            ? { ...m, leftChildId: permMemberId, leftPV: m.leftPV + pkg.pv, leftCarryForward: m.leftCarryForward + pkg.pv, teamMembersCount: m.teamMembersCount + 1 }
-            : { ...m, rightChildId: permMemberId, rightPV: m.rightPV + pkg.pv, rightCarryForward: m.rightCarryForward + pkg.pv, teamMembersCount: m.teamMembersCount + 1 };
+    // Persist asynchronously to server durable store
+    fetch('/api/network/blank-slot/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(atomicParams)
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((json) => {
+        if (json?.success && json.state) {
+          setTreeState(json.state);
         }
-        if (m.id === finalSponsorId) {
-          return { ...m, directReferralsCount: m.directReferralsCount + 1 };
-        }
-        return m;
-      });
+      })
+      .catch(() => undefined);
 
-      return [...updated, newNetworkMember];
-    });
-
-    // Remove consumed reserved slot
     if (activeReserved) {
       setReservedPlacements((prev) => prev.filter((r) => r.userId !== userId));
     }
 
-    const referralCode = permMemberId;
+    const assignedCompanyId = atomicRes.registeredMember.id;
+    const referralCode = assignedCompanyId;
     const referralLink = `${window.location.origin}/register?ref=${referralCode}`;
 
     addNotification({
       userId: userId,
       title: 'নেটওয়ার্ক অ্যাক্টিভেশন ও AI প্লেসমেন্ট সফল!',
-      message: `অভিনন্দন ${fullName}! নেটওয়ার্ক প্লেসমেন্ট সফলভাবে সম্পন্ন হয়েছে। (মেম্বার আইডি: ${permMemberId}, স্পন্সর: ${finalSponsorName}, প্লেসমেন্ট: ${finalPlacementName})`,
+      message: `অভিনন্দন ${fullName}! মেম্বার আইডি: ${assignedCompanyId}, নতুন ২টি Blank Slot: ${atomicRes.newLeftBlank?.id} (LEFT) ও ${atomicRes.newRightBlank?.id} (RIGHT)।`,
       channel: 'in_app'
     });
 
     return {
       success: true,
       message: `নেটওয়ার্ক প্লেসমেন্ট সফল হয়েছে (${finalPositionText})`,
-      member: newNetworkMember,
+      member: atomicRes.registeredMember,
       referralCode,
       referralLink,
       sponsorId: finalSponsorId,
@@ -2292,7 +1760,6 @@ export const NetworkMarketingProvider: React.FC<{ children: React.ReactNode }> =
     packageId: string
   ) => {
     const pkg = packages.find((p) => p.id === packageId) || packages[0];
-    const newId = generateNextMemberId(members);
     const sponsorObj = findSponsor(sponsorId) || members[0];
     const actualSponsorId = sponsorObj.id;
 
@@ -2315,70 +1782,43 @@ export const NetworkMarketingProvider: React.FC<{ children: React.ReactNode }> =
 
     const targetParentId = parentId && members.some((m) => m.id === parentId) ? parentId : actualSponsorId;
     const actualParentId = findAvailableParent(targetParentId, leg);
+    const blankSlot = getBlankSlotForParent(actualParentId, leg);
 
-    const newMember: NetworkMember = {
-      id: newId,
+    const atomicParams: BlankSlotRegistrationParams = {
+      reservedCompanyId: blankSlot?.id,
+      parentId: actualParentId,
+      leg,
       userId: `usr-new-${Date.now()}`,
       fullName: newMemberName,
       mobile: newMemberMobile,
-      email: `${newMemberName.toLowerCase().replace(/\s+/g, '')}@gmail.com`,
-      joinDate: new Date().toISOString().substring(0, 10),
-      rank: 'network_member',
-      packageId: pkg.id,
-      packageName: pkg.nameBn,
+      email: `${newMemberMobile}@aponbazar.com`,
       sponsorId: actualSponsorId,
       sponsorName: sponsorObj.fullName,
-      parentId: actualParentId,
-      placementLeg: leg,
-      pv: pkg.pv,
-      leftPV: 0,
-      rightPV: 0,
-      leftCarryForward: 0,
-      rightCarryForward: 0,
-      totalMatchedPV: 0,
-      directReferralsCount: 0,
-      teamMembersCount: 0,
-      active: true
+      packageId: pkg.id,
+      packageName: pkg.nameBn,
+      pv: pkg.pv
     };
 
-    // Update parent child references & update upline PV / GV counts
-    setMembers((prev) => {
-      const updated = prev.map((m) => {
-        if (m.id === actualParentId) {
-          if (leg === 'left') {
-            return {
-              ...m,
-              leftChildId: newId,
-              leftPV: m.leftPV + pkg.pv,
-              leftCarryForward: m.leftCarryForward + pkg.pv,
-              teamMembersCount: m.teamMembersCount + 1
-            };
-          } else {
-            return {
-              ...m,
-              rightChildId: newId,
-              rightPV: m.rightPV + pkg.pv,
-              rightCarryForward: m.rightCarryForward + pkg.pv,
-              teamMembersCount: m.teamMembersCount + 1
-            };
-          }
-        }
-        if (m.id === actualSponsorId) {
-          return {
-            ...m,
-            directReferralsCount: m.directReferralsCount + 1
-          };
-        }
-        return m;
-      });
-      return [...updated, newMember];
-    });
+    const res = executeAtomicBlankSlotRegistration(treeState, atomicParams);
+    if (res.success && res.state) {
+      setTreeState(res.state);
+      fetch('/api/network/blank-slot/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(atomicParams)
+      })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((json) => {
+          if (json?.success && json.state) setTreeState(json.state);
+        })
+        .catch(() => undefined);
+    }
 
     if (currentUser) {
       addNotification({
         userId: currentUser.id,
         title: 'নতুন মেম্বার যুক্ত হয়েছে!',
-        message: `${newMemberName}-কে সফলভাবে স্পন্সর ${sponsorObj.fullName}-এর অধীনে বাইনারি ট্রির ${leg === 'left' ? 'বাম' : 'ডান'} লেগে যুক্ত করা হয়েছে।`,
+        message: `${newMemberName} (${res.registeredMember?.id || ''})-কে সফলভাবে স্পন্সর ${sponsorObj.fullName}-এর অধীনে বাইনারি ট্রির ${leg === 'left' ? 'বাম' : 'ডান'} লেগে যুক্ত করা হয়েছে।`,
         channel: 'in_app'
       });
     }
@@ -2701,7 +2141,7 @@ export const NetworkMarketingProvider: React.FC<{ children: React.ReactNode }> =
       return { success: false, message: 'টার্গেট মেম্বার খুঁজে পাওয়া যায়নি।' };
     }
 
-    if (target.id === 'TMK000001' || !target.parentId) {
+    if (target.id === COMPANY_MASTER_ROOT_ID || target.id === 'TMK000001' || !target.parentId) {
       return { success: false, message: 'কোম্পানি রুট নোড (Root Node) স্থানান্তর করা সম্ভব নয়।' };
     }
 
@@ -2748,40 +2188,45 @@ export const NetworkMarketingProvider: React.FC<{ children: React.ReactNode }> =
     const oldParentId = target.parentId;
     const oldPosition = target.position || target.placementLeg;
 
-    // Execute state change
-    setMembers((prev) =>
-      prev.map((m) => {
-        // 1. Remove target from old parent's child slots
-        if (m.id === oldParentId) {
-          return {
-            ...m,
-            leftChildId: m.leftChildId === target.id ? undefined : m.leftChildId,
-            rightChildId: m.rightChildId === target.id ? undefined : m.rightChildId
-          };
-        }
-        // 2. Add target to new parent's designated slot
-        if (m.id === newParent.id) {
-          return {
-            ...m,
-            leftChildId: newPosition === 'left' ? target.id : (m.leftChildId === target.id ? undefined : m.leftChildId),
-            rightChildId: newPosition === 'right' ? target.id : (m.rightChildId === target.id ? undefined : m.rightChildId)
-          };
-        }
-        // 3. Update target member's parent and position
-        if (m.id === target.id) {
-          return {
-            ...m,
-            parentId: newParent.id,
-            binaryParentId: newParent.id,
-            binary_parent_id: newParent.id,
-            placementLeg: newPosition,
-            position: newPosition,
-            placementLocked: true
-          };
-        }
-        return m;
+    // Tombstone replaced blank node ID (never reuse) and generate fresh Blank ID for vacated old slot
+    setTreeState((prev) => {
+      const replacedBlankId =
+        newPosition === 'left' ? newParent.leftBlankId : newParent.rightBlankId;
+      const nextAllocated = { ...prev.allocatedIds };
+      if (replacedBlankId) {
+        nextAllocated[replacedBlankId] = 'tombstoned';
+      }
+      const nextNodes = prev.nodes
+        .filter((m) => m.id !== replacedBlankId)
+        .map((m) =>
+          m.id === target.id
+            ? {
+                ...m,
+                parentId: newParent.id,
+                parent_id: newParent.id,
+                binaryParentId: newParent.id,
+                binary_parent_id: newParent.id,
+                placementId: newParent.id,
+                placement_id: newParent.id,
+                placementLeg: newPosition,
+                position: newPosition === 'left' ? 'LEFT' : 'RIGHT',
+                placementLocked: true
+              }
+            : m
+        );
+      return reconcileBinaryTreeState(nextNodes, prev.lastCompanySeq, nextAllocated, prev.version + 1);
+    });
+
+    fetch('/api/network/placement/reassign', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetMemberId, newBinaryParentId, newPosition, reason })
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((json) => {
+        if (json?.success && json.data?.treeState) setTreeState(json.data.treeState);
       })
-    );
+      .catch(() => undefined);
 
     // Record Audit Log
     if (addAuditLog) {
@@ -2866,6 +2311,12 @@ export const NetworkMarketingProvider: React.FC<{ children: React.ReactNode }> =
     );
 
     setMatchingHistory((prev) => [record, ...prev]);
+
+    fetch('/api/network/matching/execute', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memberId: member.id, adminId, reason })
+    }).catch(() => undefined);
 
     if (addAuditLog) {
       addAuditLog(
@@ -2953,6 +2404,12 @@ export const NetworkMarketingProvider: React.FC<{ children: React.ReactNode }> =
 
     setMatchingHistory((prev) => [...newRecords, ...prev]);
 
+    fetch('/api/network/matching/batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adminId, reason })
+    }).catch(() => undefined);
+
     if (addAuditLog) {
       addAuditLog(
         'NETWORK_BATCH_MATCHING_EXECUTED',
@@ -3000,6 +2457,12 @@ export const NetworkMarketingProvider: React.FC<{ children: React.ReactNode }> =
           : m
       )
     );
+
+    fetch('/api/network/carry-forward/adjust', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memberId: member.id, leftNew, rightNew, reason, adminId })
+    }).catch(() => undefined);
 
     if (addAuditLog) {
       addAuditLog(
@@ -3079,7 +2542,11 @@ export const NetworkMarketingProvider: React.FC<{ children: React.ReactNode }> =
     <NetworkMarketingContext.Provider
       value={{
         members,
+        allTreeNodes,
+        blankPositions,
+        treeState,
         currentMember,
+        ownCompanyMemberId,
         isNetworkActive,
         packages,
         ranks,
@@ -3089,6 +2556,10 @@ export const NetworkMarketingProvider: React.FC<{ children: React.ReactNode }> =
         withdrawals,
         networkReports,
         reservedPlacements,
+        getBlankSlotForParent,
+        registerBlankSlotAtomic,
+        fetchIsolatedSubtree,
+        refreshBinaryTreeFromServer,
         activatePackage,
         addReservedSlot,
         releaseReservedSlot,

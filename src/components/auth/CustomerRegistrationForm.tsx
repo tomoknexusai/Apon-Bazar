@@ -22,6 +22,7 @@ import {
   SlotReservationService,
   AIPlacementRecommendation
 } from '../../services/SlotReservationService';
+import { COMPANY_MASTER_ROOT_ID } from '../../types/networkMarketing';
 import {
   BD_DIVISIONS,
   getDistrictsList,
@@ -62,10 +63,14 @@ export interface CustomerRegistrationFormProps {
   initialReferralId?: string;
   initialPlacementId?: string;
   initialPlacementPosition?: 'left' | 'right';
+  reservedCompanyId?: string;
   lockPlacement?: boolean;
   aiRecommendation?: AIPlacementRecommendation;
   onSuccess?: (summary: {
     customerId: string;
+    binaryCompanyId?: string;
+    newLeftBlankId?: string;
+    newRightBlankId?: string;
     username: string;
     fullName: string;
     mobile: string;
@@ -91,6 +96,7 @@ export const CustomerRegistrationForm: React.FC<CustomerRegistrationFormProps> =
   initialReferralId,
   initialPlacementId,
   initialPlacementPosition,
+  reservedCompanyId,
   lockPlacement = false,
   aiRecommendation,
   onSuccess,
@@ -100,12 +106,23 @@ export const CustomerRegistrationForm: React.FC<CustomerRegistrationFormProps> =
   defaultTab = 'signup',
   showTabs = true
 }) => {
-  const { registerUser, loginWithEmailPassword, rollbackUserRegistration, setActiveRole, allUsers } = useAuth();
+  const {
+    registerUser,
+    linkBinaryCompanyId,
+    loginWithEmailPassword,
+    rollbackUserRegistration,
+    setActiveRole,
+    allUsers,
+    isLoggedIn
+  } = useAuth();
   const {
     members,
+    allTreeNodes,
     currentMember,
     calculatePlacementRule,
-    executeNetworkActivationAndPlacement,
+    getBlankSlotForParent,
+    registerBlankSlotAtomic,
+    refreshBinaryTreeFromServer,
     reserveSlotDuringRegistration,
     releaseReservedSlot,
     reservedPlacements
@@ -159,8 +176,13 @@ export const CustomerRegistrationForm: React.FC<CustomerRegistrationFormProps> =
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [generalError, setGeneralError] = useState('');
   const [activeReservationId, setActiveReservationId] = useState<string | null>(null);
+  const isPrivilegedSessionRegistration = source === 'binary_tree' && isLoggedIn;
+
   const [registrationSuccessSummary, setRegistrationSuccessSummary] = useState<{
     customerId: string;
+    binaryCompanyId?: string;
+    newLeftBlankId?: string;
+    newRightBlankId?: string;
     username: string;
     fullName: string;
     mobile: string;
@@ -176,22 +198,33 @@ export const CustomerRegistrationForm: React.FC<CustomerRegistrationFormProps> =
   const [forgotPasswordInput, setForgotPasswordInput] = useState('');
   const [forgotPasswordSent, setForgotPasswordSent] = useState(false);
 
-  // Preview Customer ID (e.g. CUST-100001, distinct from phone number)
+  // Preview Customer ID (non-mutating AponCN-XXXXXX preview, distinct from phone number)
   const previewCustomerId = useMemo(() => {
-    return CustomerRegistrationService.generateUniqueCustomerId(allUsers);
+    return CustomerRegistrationService.previewUniqueCustomerId(allUsers);
   }, [allUsers]);
+
+  // Resolve pre-reserved Binary Company ID for the targeted Blank Position
+  const resolvedBlankSlot = useMemo(() => {
+    const targetParent = (placementId || initialPlacementId || '').trim();
+    const targetLeg = placementPosition || initialPlacementPosition || 'right';
+    if (!targetParent) return undefined;
+    return getBlankSlotForParent(targetParent, targetLeg);
+  }, [placementId, initialPlacementId, placementPosition, initialPlacementPosition, getBlankSlotForParent]);
+
+  const effectiveReservedCompanyId =
+    reservedCompanyId || resolvedBlankSlot?.id || aiRecommendation?.reservedCompanyId;
 
   // Synchronize initial referral / placement props
   useEffect(() => {
     if (initialReferralId) {
       setReferralId(initialReferralId.trim());
     } else if (source === 'binary_tree') {
-      const loggedInCustomerId = currentMember?.customerId || currentMember?.id || 'TMK000001';
+      const loggedInCustomerId = currentMember?.customerId || currentMember?.id || COMPANY_MASTER_ROOT_ID;
       setReferralId(loggedInCustomerId);
     } else if (source === 'ai_placement' && aiRecommendation) {
       setReferralId(aiRecommendation.sponsorId);
     } else if (source === 'checkout' && !referralId) {
-      setReferralId('TMK000001');
+      setReferralId(COMPANY_MASTER_ROOT_ID);
     }
 
     if (initialPlacementId) {
@@ -326,7 +359,7 @@ export const CustomerRegistrationForm: React.FC<CustomerRegistrationFormProps> =
     setGeneralError('');
     setFormErrors({});
 
-    const effectiveReferralId = referralId.trim() || 'TMK000001';
+    const effectiveReferralId = referralId.trim() || COMPANY_MASTER_ROOT_ID;
 
     const payload = {
       fullName: fullName.trim(),
@@ -339,6 +372,7 @@ export const CustomerRegistrationForm: React.FC<CustomerRegistrationFormProps> =
       referralId: effectiveReferralId,
       placementId: placementId.trim(),
       position: placementPosition,
+      reservedCompanyId: effectiveReservedCompanyId,
       division,
       district,
       upazila,
@@ -357,7 +391,7 @@ export const CustomerRegistrationForm: React.FC<CustomerRegistrationFormProps> =
     const val = CustomerRegistrationService.validateForm(
       payload,
       allUsers,
-      members,
+      allTreeNodes,
       reservedPlacements
     );
 
@@ -388,11 +422,19 @@ export const CustomerRegistrationForm: React.FC<CustomerRegistrationFormProps> =
         payload.position
       );
 
-      const chosenSponsorId = calcResult.sponsorId || 'TMK000001';
-      const chosenPlacementId = calcResult.placementId || 'TMK000001';
+      if (calcResult.error) {
+        throw new Error(calcResult.error);
+      }
+
+      const chosenSponsorId = calcResult.sponsorId || COMPANY_MASTER_ROOT_ID;
+      const chosenPlacementId = calcResult.placementId || COMPANY_MASTER_ROOT_ID;
       const chosenPlacementLeg = calcResult.placementLeg || 'right';
 
-      // 1. Register User in AuthContext
+      const targetBlankSlot =
+        effectiveReservedCompanyId ||
+        getBlankSlotForParent(chosenPlacementId, chosenPlacementLeg)?.id;
+
+      // 1. Register User in AuthContext (preserve Super Admin / logged-in tree operator session if applicable)
       const newUser = registerUser({
         fullName: payload.fullName,
         username: payload.username,
@@ -415,31 +457,48 @@ export const CustomerRegistrationForm: React.FC<CustomerRegistrationFormProps> =
         referralId: chosenSponsorId,
         placementId: chosenPlacementId,
         placementLeg: chosenPlacementLeg,
-        registrationSource: source
+        registrationSource: source,
+        preserveCurrentSession: isPrivilegedSessionRegistration
       });
 
       if (!newUser || !newUser.id) {
         throw new Error('কাস্টমার একাউন্ট তৈরিতে সমস্যা হয়েছে।');
       }
 
-      // 2. Binary Network Placement
+      // 2. Atomic Blank Position Conversion + 2 New Blank Child Positions Generation
       const userPermanentId = newUser.customerId || newUser.permanentMemberId || newUser.id;
-      executeNetworkActivationAndPlacement({
+      const atomicRes = await registerBlankSlotAtomic({
+        reservedCompanyId: targetBlankSlot,
+        parentId: chosenPlacementId,
+        leg: chosenPlacementLeg,
         userId: newUser.id,
-        fullName: payload.fullName,
         username: payload.username,
-        customerId: userPermanentId,
+        aponUniqueId: userPermanentId,
+        fullName: payload.fullName,
         mobile: payload.mobile,
         email: payload.email || newUser.email,
         address: fullAddressStr,
         registrationSource: source,
-        sponsorIdInput: payload.referralId,
-        placementIdInput: payload.placementId,
-        preferredLeg: chosenPlacementLeg,
-        district,
-        upazila,
-        permanentMemberId: userPermanentId
+        sponsorId: chosenSponsorId,
+        sponsorName: calcResult.sponsorName,
+        packageId: 'pkg-100'
       });
+
+      if (!atomicRes.success || !atomicRes.registeredMember) {
+        rollbackUserRegistration(newUser.id);
+        refreshBinaryTreeFromServer();
+        if (activeReservationId && chosenPlacementId) {
+          releaseReservedSlot(chosenPlacementId, chosenPlacementLeg);
+          setActiveReservationId(null);
+        }
+        setGeneralError(
+          atomicRes.message ||
+            'নির্বাচিত Blank Position-এ নিবন্ধন ব্যর্থ হয়েছে। অনুগ্রহ করে ট্রি রিফ্রেশ করে আবার চেষ্টা করুন।'
+        );
+        return;
+      }
+
+      linkBinaryCompanyId(newUser.id, atomicRes.registeredMember.id);
 
       // 3. Release slot reservation if active
       if (activeReservationId && chosenPlacementId) {
@@ -447,8 +506,8 @@ export const CustomerRegistrationForm: React.FC<CustomerRegistrationFormProps> =
         setActiveReservationId(null);
       }
 
-      // 4. Force Active Role to customer
-      if (setActiveRole) {
+      // 4. Switch Active Role to customer ONLY for standalone self-signup
+      if (setActiveRole && !isPrivilegedSessionRegistration) {
         setActiveRole('customer');
       }
 
@@ -456,14 +515,17 @@ export const CustomerRegistrationForm: React.FC<CustomerRegistrationFormProps> =
       if (addNotification) {
         addNotification({
           userId: newUser.id,
-          title: 'কাস্টমার রেজিস্ট্রেশন সফল!',
-          message: `স্বাগতম ${payload.fullName}! আপনার Customer ID: ${userPermanentId}, User ID: ${payload.username}।`,
+          title: 'কাস্টমার ও বাইনারি মেম্বার রেজিস্ট্রেশন সফল!',
+          message: `স্বাগতম ${payload.fullName}! Company ID: ${atomicRes.registeredMember.id}, Customer ID: ${userPermanentId}, নতুন Blank Slots: ${atomicRes.newLeftBlank?.id} (LEFT) & ${atomicRes.newRightBlank?.id} (RIGHT)।`,
           channel: 'in_app'
         });
       }
 
       const summary = {
         customerId: userPermanentId,
+        binaryCompanyId: atomicRes.registeredMember.id,
+        newLeftBlankId: atomicRes.newLeftBlank?.id,
+        newRightBlankId: atomicRes.newRightBlank?.id,
         username: payload.username,
         fullName: payload.fullName,
         mobile: payload.mobile,
@@ -512,7 +574,7 @@ export const CustomerRegistrationForm: React.FC<CustomerRegistrationFormProps> =
             username: loginUserId.trim(),
             fullName: 'Customer',
             mobile: '',
-            sponsorId: 'TMK000001',
+            sponsorId: COMPANY_MASTER_ROOT_ID,
             placementId: '',
             placementLeg: 'right',
             registrationSource: source,
@@ -542,13 +604,15 @@ export const CustomerRegistrationForm: React.FC<CustomerRegistrationFormProps> =
 
         <div className="text-center space-y-1.5">
           <span className="px-3 py-1 bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 font-bold text-xs rounded-full uppercase tracking-wider">
-            কাস্টমার একাউন্ট তৈরি সম্পন্ন
+            মেম্বার ও অটো Blank Position তৈরি সম্পন্ন
           </span>
           <h3 className="font-black text-2xl text-neutral-900 dark:text-white">
             রেজিস্ট্রেশন সফল হয়েছে!
           </h3>
           <p className="text-xs text-neutral-500">
-            আপনার কাস্টমার একাউন্ট সফলভাবে তৈরি হয়েছে এবং স্বয়ংক্রিয়ভাবে লগইন হয়েছে।
+            {isPrivilegedSessionRegistration
+              ? 'সদস্যটি বাইনারি ট্রির সংরক্ষিত পজিশনে যুক্ত হয়েছে এবং তার অধীনে স্বয়ংক্রিয়ভাবে ২টি নতুন Blank Position তৈরি হয়েছে।'
+              : 'আপনার কাস্টমার একাউন্ট ও বাইনারি নেটওয়ার্ক পজিশন সফলভাবে তৈরি হয়েছে।'}
           </p>
         </div>
 
@@ -557,6 +621,15 @@ export const CustomerRegistrationForm: React.FC<CustomerRegistrationFormProps> =
             <span className="text-neutral-500 font-medium">কাস্টমার নাম:</span>
             <span className="font-bold text-neutral-900 dark:text-white">{registrationSuccessSummary.fullName}</span>
           </div>
+
+          {registrationSuccessSummary.binaryCompanyId && (
+            <div className="flex justify-between py-1 border-b border-neutral-200 dark:border-neutral-700">
+              <span className="text-neutral-500 font-medium">Binary Company ID:</span>
+              <span className="font-mono font-black text-indigo-600 dark:text-indigo-400 text-sm">
+                {registrationSuccessSummary.binaryCompanyId}
+              </span>
+            </div>
+          )}
 
           <div className="flex justify-between py-1 border-b border-neutral-200 dark:border-neutral-700">
             <span className="text-neutral-500 font-medium">Customer ID (স্থায়ী):</span>
@@ -579,6 +652,28 @@ export const CustomerRegistrationForm: React.FC<CustomerRegistrationFormProps> =
             </span>
           </div>
 
+          {(registrationSuccessSummary.newLeftBlankId || registrationSuccessSummary.newRightBlankId) && (
+            <div className="pt-1">
+              <span className="text-neutral-500 font-bold block mb-1.5">
+                অটো-জেনারেটেড ২টি নতুন চাইল্ড Blank Position:
+              </span>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="p-2 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-center">
+                  <span className="block text-[10px] font-bold text-amber-700 dark:text-amber-300">LEFT BLANK</span>
+                  <span className="font-mono font-black text-xs text-neutral-900 dark:text-white">
+                    {registrationSuccessSummary.newLeftBlankId || '—'}
+                  </span>
+                </div>
+                <div className="p-2 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 text-center">
+                  <span className="block text-[10px] font-bold text-indigo-700 dark:text-indigo-300">RIGHT BLANK</span>
+                  <span className="font-mono font-black text-xs text-neutral-900 dark:text-white">
+                    {registrationSuccessSummary.newRightBlankId || '—'}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
           {registrationSuccessSummary.fullServiceAddress && (
             <div className="py-1">
               <span className="text-neutral-500 font-medium block mb-0.5">বিলিং ঠিকানা:</span>
@@ -596,7 +691,7 @@ export const CustomerRegistrationForm: React.FC<CustomerRegistrationFormProps> =
           }}
           className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-2xl text-xs transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
         >
-          <span>অর্ডার সম্পন্ন করতে এগিয়ে যান</span>
+          <span>{isPrivilegedSessionRegistration ? 'বাইনারি ট্রি-তে ফিরে যান' : 'অর্ডার সম্পন্ন করতে এগিয়ে যান'}</span>
           <ArrowRight className="w-4 h-4" />
         </button>
       </div>
@@ -709,6 +804,41 @@ export const CustomerRegistrationForm: React.FC<CustomerRegistrationFormProps> =
       {activeTab === 'signup' && (
         <form onSubmit={handleSignupSubmit} className="mt-4 space-y-4 text-xs">
           
+          {/* Reserved Blank Position Lock Details Card */}
+          {(effectiveReservedCompanyId || lockPlacement) && (
+            <div className="p-3 rounded-2xl bg-indigo-50/80 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-black text-indigo-800 dark:text-indigo-300 flex items-center gap-1.5">
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  সংরক্ষিত বাইনারি পজিশন (Reserved Blank Position)
+                </span>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-indigo-600 text-white">
+                  Read-Only Lock
+                </span>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-[11px]">
+                <div className="p-2 rounded-xl bg-white dark:bg-neutral-900 border border-indigo-100 dark:border-indigo-900">
+                  <span className="block text-[10px] text-neutral-400 font-semibold">Reserved Company ID</span>
+                  <span className="font-mono font-black text-indigo-700 dark:text-indigo-300">
+                    {effectiveReservedCompanyId || 'AUTO'}
+                  </span>
+                </div>
+                <div className="p-2 rounded-xl bg-white dark:bg-neutral-900 border border-indigo-100 dark:border-indigo-900">
+                  <span className="block text-[10px] text-neutral-400 font-semibold">Parent ID</span>
+                  <span className="font-mono font-bold text-neutral-800 dark:text-neutral-200">
+                    {placementId || initialPlacementId || COMPANY_MASTER_ROOT_ID}
+                  </span>
+                </div>
+                <div className="p-2 rounded-xl bg-white dark:bg-neutral-900 border border-indigo-100 dark:border-indigo-900">
+                  <span className="block text-[10px] text-neutral-400 font-semibold">Position</span>
+                  <span className="font-mono font-black uppercase text-emerald-600 dark:text-emerald-400">
+                    {placementPosition}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Instruction Note */}
           <div className="p-2.5 bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/40 rounded-xl text-emerald-800 dark:text-emerald-300 text-xs font-semibold">
             অনুগ্রহ করে একটি ইউনিক ইউজার আইডি (User ID) নির্বাচন করুন।
@@ -799,7 +929,7 @@ export const CustomerRegistrationForm: React.FC<CustomerRegistrationFormProps> =
                 className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-100 dark:bg-neutral-800/60 text-emerald-700 dark:text-emerald-400 font-mono font-bold text-xs cursor-not-allowed"
               />
               <span className="text-[10px] text-neutral-400 block mt-0.5">
-                সিস্টেমে স্বয়ংক্রিয়ভাবে তৈরি স্থায়ী আইডি (উদাঃ CUST-100001)।
+                সিস্টেমে স্বয়ংক্রিয়ভাবে তৈরি স্থায়ী আইডি (উদাঃ AponCN-000001)।
               </span>
             </div>
           </div>
@@ -1144,11 +1274,11 @@ export const CustomerRegistrationForm: React.FC<CustomerRegistrationFormProps> =
                   value={referralId}
                   readOnly={lockPlacement && Boolean(initialReferralId)}
                   onChange={(e) => setReferralId(e.target.value.toUpperCase())}
-                  placeholder="TMK000001 (ঐচ্ছিক)"
+                  placeholder={`${COMPANY_MASTER_ROOT_ID} (ঐচ্ছিক)`}
                   className="w-full px-3 py-2 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white font-mono text-xs"
                 />
                 <span className="text-[10px] text-neutral-400 block mt-0.5">
-                  ফাঁকা রাখলে কোম্পানি মাস্টার আইডি (TMK000001) প্রযোজ্য হবে।
+                  ফাঁকা রাখলে কোম্পানি মাস্টার আইডি ({COMPANY_MASTER_ROOT_ID}) প্রযোজ্য হবে।
                 </span>
               </div>
 

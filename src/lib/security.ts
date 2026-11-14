@@ -236,6 +236,10 @@ export function getRoleBanglaName(role: string): string {
  * - Account Officer: AponAO-000001
  * - HR: AponHR-000001
  */
+export function previewRoleUniqueId(role: UserRole | string, existingUsers: UserProfile[] = []): string {
+  return UniqueIdService.previewNextUniqueId(role, existingUsers);
+}
+
 export function generateRoleUniqueId(role: UserRole | string, existingUsers: UserProfile[] = []): string {
   return UniqueIdService.generateNextUniqueId(role, undefined, existingUsers);
 }

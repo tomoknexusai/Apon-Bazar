@@ -30,7 +30,7 @@ export const initialSystemSettings: SystemSettings = {
   sellerContactEmail: 'dealer@aponbazar.com',
   dealerContactEmail: 'dealer@aponbazar.com',
   supportEmail: 'support@aponbazar.com',
-  companyMasterId: 'GBD000001',
+  companyMasterId: 'AB-1000000001',
   updatedAt: new Date().toISOString()
 };
 
@@ -177,7 +177,8 @@ export const initialSeedUsers: UserProfile[] = [
     roles: ['network_member', 'customer'],
     primaryRole: 'network_member',
     isNetworkActive: true,
-    sponsorId: 'GBD000001',
+    binaryCompanyId: 'AB-1000000002',
+    sponsorId: 'AB-1000000001',
     mandatoryAddress: {
       id: 'addr-net-07',
       userId: 'usr-network-07',

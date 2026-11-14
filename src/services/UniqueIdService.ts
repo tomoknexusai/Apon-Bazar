@@ -34,6 +34,30 @@ export interface AllocatedIdRecord {
 const STORAGE_SEQUENCES_KEY = 'aponbazar_unique_id_sequences';
 const STORAGE_ALLOCATED_IDS_KEY = 'aponbazar_allocated_unique_ids';
 
+const memoryStoreFallback: Record<string, string> = {};
+
+function readStorageItem(key: string): string | null {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      return localStorage.getItem(key);
+    }
+    return memoryStoreFallback[key] ?? null;
+  } catch {
+    return memoryStoreFallback[key] ?? null;
+  }
+}
+
+function writeStorageItem(key: string, value: string): void {
+  memoryStoreFallback[key] = value;
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(key, value);
+    }
+  } catch (e) {
+    console.error('Error writing unique ID storage', e);
+  }
+}
+
 export class UniqueIdService {
   /**
    * Normalizes any input role string (including legacy roles) to one of the 8 final canonical roles.
@@ -44,48 +68,79 @@ export class UniqueIdService {
 
     switch (r) {
       case 'super_admin':
+      case 'super-admin':
+      case 'super admin':
       case 'founder':
       case 'superadmin':
+      case 'sadmin':
         return 'super_admin';
 
       case 'admin':
       case 'district_admin':
+      case 'district-admin':
+      case 'district admin':
       case 'sub_admin':
+      case 'administrator':
         return 'admin';
 
       case 'operations_officer':
+      case 'operations-officer':
+      case 'operations officer':
       case 'operations_partner':
+      case 'operations-partner':
       case 'operation_officer':
+      case 'operation officer':
       case 'ops_partner':
+      case 'ops':
         return 'operations_officer';
 
       case 'account_officer':
+      case 'account-officer':
+      case 'account officer':
+      case 'accounts_officer':
       case 'finance':
       case 'finance_officer':
+      case 'finance-officer':
       case 'accounts':
+      case 'accountant':
         return 'account_officer';
 
       case 'rider':
       case 'delivery_rider':
+      case 'delivery-rider':
+      case 'delivery rider':
       case 'delivery_man':
+      case 'delivery-man':
+      case 'delivery man':
       case 'deliveryman':
+      case 'courier':
         return 'rider';
 
       case 'vendor_dealer_shop':
+      case 'vendor-dealer-shop':
+      case 'vds':
       case 'vendor':
       case 'dealer':
       case 'shop':
       case 'seller':
+      case 'merchant':
+      case 'shopkeeper':
+      case 'store_owner':
         return 'vendor_dealer_shop';
 
       case 'hr':
       case 'hr_manager':
+      case 'hr_officer':
+      case 'hr officer':
       case 'human_resources':
+      case 'human-resources':
         return 'hr';
 
       case 'customer_networker':
+      case 'customer-networker':
       case 'customer':
       case 'network_member':
+      case 'network-member':
       case 'networker':
       default:
         return 'customer_networker';
@@ -114,7 +169,7 @@ export class UniqueIdService {
    */
   private static getStoredSequences(): Record<FinalRole, number> {
     try {
-      const saved = localStorage.getItem(STORAGE_SEQUENCES_KEY);
+      const saved = readStorageItem(STORAGE_SEQUENCES_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
         return {
@@ -149,7 +204,7 @@ export class UniqueIdService {
    */
   private static saveStoredSequences(seq: Record<FinalRole, number>): void {
     try {
-      localStorage.setItem(STORAGE_SEQUENCES_KEY, JSON.stringify(seq));
+      writeStorageItem(STORAGE_SEQUENCES_KEY, JSON.stringify(seq));
     } catch (e) {
       console.error('Error saving unique ID sequences', e);
     }
@@ -160,7 +215,7 @@ export class UniqueIdService {
    */
   static getAllocatedIds(): Record<string, AllocatedIdRecord> {
     try {
-      const saved = localStorage.getItem(STORAGE_ALLOCATED_IDS_KEY);
+      const saved = readStorageItem(STORAGE_ALLOCATED_IDS_KEY);
       if (saved) {
         return JSON.parse(saved);
       }
@@ -175,10 +230,63 @@ export class UniqueIdService {
    */
   private static saveAllocatedIds(registry: Record<string, AllocatedIdRecord>): void {
     try {
-      localStorage.setItem(STORAGE_ALLOCATED_IDS_KEY, JSON.stringify(registry));
+      writeStorageItem(STORAGE_ALLOCATED_IDS_KEY, JSON.stringify(registry));
     } catch (e) {
       console.error('Error saving allocated unique IDs', e);
     }
+  }
+
+  /**
+   * Computes the highest currently allocated/known sequence number for a role prefix without side effects.
+   */
+  private static computeMaxSequenceForRole(
+    finalRole: FinalRole,
+    sequences: Record<FinalRole, number>,
+    allocated: Record<string, AllocatedIdRecord>,
+    existingUsers: UserProfile[] = []
+  ): number {
+    const prefix = FINAL_ROLE_DEFINITIONS[finalRole].prefix;
+    let maxNum = sequences[finalRole] || 0;
+
+    Object.keys(allocated).forEach((id) => {
+      if (id.startsWith(prefix)) {
+        const numPart = parseInt(id.replace(prefix, ''), 10);
+        if (!isNaN(numPart) && numPart > maxNum) {
+          maxNum = numPart;
+        }
+      }
+    });
+
+    existingUsers.forEach((u) => {
+      const candidates = [u.aponUniqueId, u.permanentMemberId, u.customerId];
+      candidates.forEach((idToCheck) => {
+        if (idToCheck && idToCheck.startsWith(prefix)) {
+          const numPart = parseInt(idToCheck.replace(prefix, ''), 10);
+          if (!isNaN(numPart) && numPart > maxNum) {
+            maxNum = numPart;
+          }
+        }
+      });
+    });
+
+    return maxNum;
+  }
+
+  /**
+   * Pure non-mutating preview of the next Unique ID for UI display in registration forms.
+   * NEVER increments stored sequences and NEVER writes to allocated registry.
+   */
+  static previewNextUniqueId(
+    roleInput: string,
+    existingUsers: UserProfile[] = []
+  ): string {
+    const finalRole = this.normalizeToFinalRole(roleInput);
+    const prefix = FINAL_ROLE_DEFINITIONS[finalRole].prefix;
+    const sequences = this.getStoredSequences();
+    const allocated = this.getAllocatedIds();
+    const maxNum = this.computeMaxSequenceForRole(finalRole, sequences, allocated, existingUsers);
+    const nextNum = maxNum + 1;
+    return `${prefix}${nextNum.toString().padStart(6, '0')}`;
   }
 
   /**
@@ -197,33 +305,15 @@ export class UniqueIdService {
     const sequences = this.getStoredSequences();
     const allocated = this.getAllocatedIds();
 
-    // Find the maximum existing sequence number for this prefix among stored registry and user list
-    let maxNum = sequences[finalRole] || 0;
+    const maxNum = this.computeMaxSequenceForRole(finalRole, sequences, allocated, existingUsers);
 
-    // Check allocated records
-    Object.keys(allocated).forEach((id) => {
-      if (id.startsWith(prefix)) {
-        const numPart = parseInt(id.replace(prefix, ''), 10);
-        if (!isNaN(numPart) && numPart > maxNum) {
-          maxNum = numPart;
-        }
-      }
-    });
-
-    // Check existing users passed in
-    existingUsers.forEach((u) => {
-      const idToCheck = u.aponUniqueId || u.permanentMemberId;
-      if (idToCheck && idToCheck.startsWith(prefix)) {
-        const numPart = parseInt(idToCheck.replace(prefix, ''), 10);
-        if (!isNaN(numPart) && numPart > maxNum) {
-          maxNum = numPart;
-        }
-      }
-    });
-
-    // Increment atomically
-    const nextNum = maxNum + 1;
-    const formattedId = `${prefix}${nextNum.toString().padStart(6, '0')}`;
+    // Increment atomically and skip any unlikely collision
+    let nextNum = maxNum + 1;
+    let formattedId = `${prefix}${nextNum.toString().padStart(6, '0')}`;
+    while (allocated[formattedId]) {
+      nextNum += 1;
+      formattedId = `${prefix}${nextNum.toString().padStart(6, '0')}`;
+    }
 
     // Update sequence
     sequences[finalRole] = nextNum;
@@ -340,61 +430,92 @@ export class UniqueIdService {
 
   /**
    * Safely migrates an existing list of users to assign permanent Role-Based Unique IDs.
-   * If a user already has a valid Apon Unique ID, it is preserved.
+   * If a user already has a valid Apon Unique ID, it is preserved without mutating input objects.
    * Preserves historical orders, referrals, and passwords.
    */
   static migrateUsers(users: UserProfile[]): { updatedUsers: UserProfile[]; modifiedCount: number } {
     let modifiedCount = 0;
     const allocated = this.getAllocatedIds();
     const sequences = this.getStoredSequences();
+    const seenValidIds = new Set<string>();
+    const isAbId = (val?: string | null) => !!val && /^AB-\d{10,}$/i.test(val.trim());
 
-    // First pass: register all already valid Apon IDs
-    users.forEach((u) => {
-      const candidate = u.aponUniqueId || u.permanentMemberId;
-      if (this.isUniqueIdValid(candidate)) {
-        u.aponUniqueId = candidate;
+    // First pass: register all already valid, non-duplicate Apon IDs or AB- IDs without mutating input array
+    const resolvedCandidates = users.map((u) => {
+      const abExisting = [u.customerId, u.binaryCompanyId, u.aponUniqueId, u.permanentMemberId].find(
+        (id) => isAbId(id)
+      );
+      if (abExisting) {
+        const normAb = abExisting.trim().toUpperCase();
+        seenValidIds.add(normAb);
+        return normAb;
+      }
+
+      const candidate = [u.aponUniqueId, u.permanentMemberId, u.customerId].find((id) =>
+        this.isUniqueIdValid(id)
+      );
+      if (candidate && !seenValidIds.has(candidate)) {
+        seenValidIds.add(candidate);
         const parsed = this.parseUniqueId(candidate);
         if (parsed.role && parsed.sequenceNumber) {
           if (parsed.sequenceNumber > (sequences[parsed.role] || 0)) {
             sequences[parsed.role] = parsed.sequenceNumber;
           }
+          const prevRecord = allocated[candidate];
           allocated[candidate] = {
             uniqueId: candidate,
             userId: u.id,
             role: parsed.role,
             businessType: u.businessType || (parsed.role === 'vendor_dealer_shop' ? 'Dealer' : undefined),
-            allocatedAt: u.createdAt || new Date().toISOString(),
-            status: u.accountStatus === 'suspended' ? 'suspended' : 'active'
+            allocatedAt: prevRecord?.allocatedAt || u.createdAt || new Date().toISOString(),
+            status:
+              prevRecord?.status === 'deleted'
+                ? 'deleted'
+                : u.accountStatus === 'suspended'
+                ? 'suspended'
+                : 'active'
           };
         }
+        return candidate;
       }
+      return undefined;
     });
 
     this.saveStoredSequences(sequences);
     this.saveAllocatedIds(allocated);
 
     // Second pass: assign IDs to users missing one
-    const updatedUsers = users.map((u) => {
-      if (this.isUniqueIdValid(u.aponUniqueId)) {
-        // Ensure businessType is populated for vendor_dealer_shop
-        const finalRole = this.normalizeToFinalRole(u.primaryRole);
-        let bType = u.businessType;
-        if (finalRole === 'vendor_dealer_shop' && !bType) {
-          bType = u.primaryRole === 'vendor' ? 'Vendor' : 'Dealer';
+    const updatedUsers = users.map((u, idx) => {
+      const existingValidId = resolvedCandidates[idx];
+      const finalRole = this.normalizeToFinalRole(u.finalRole || u.primaryRole);
+      let bType = u.businessType;
+      if (finalRole === 'vendor_dealer_shop' && !bType) {
+        bType = u.primaryRole === 'vendor' ? 'Vendor' : (u.primaryRole as string) === 'shop' ? 'Shop' : 'Dealer';
+      }
+
+      if (existingValidId) {
+        if (isAbId(existingValidId)) {
+          return {
+            ...u,
+            customerId: existingValidId,
+            binaryCompanyId: u.binaryCompanyId || existingValidId,
+            permanentMemberId: existingValidId,
+            aponUniqueId: u.aponUniqueId || existingValidId,
+            finalRole,
+            businessType: bType
+          };
+        }
+        if (u.aponUniqueId !== existingValidId || u.permanentMemberId !== existingValidId || u.finalRole !== finalRole) {
+          modifiedCount++;
         }
         return {
           ...u,
+          aponUniqueId: existingValidId,
+          permanentMemberId: existingValidId,
+          customerId: finalRole === 'customer_networker' ? (u.customerId && isAbId(u.customerId) ? u.customerId : existingValidId) : u.customerId,
           finalRole,
-          businessType: bType,
-          permanentMemberId: u.aponUniqueId
+          businessType: bType
         };
-      }
-
-      // Generate next permanent Unique ID
-      const finalRole = this.normalizeToFinalRole(u.primaryRole);
-      let bType = u.businessType;
-      if (finalRole === 'vendor_dealer_shop' && !bType) {
-        bType = u.primaryRole === 'vendor' ? 'Vendor' : 'Dealer';
       }
 
       const newId = this.generateNextUniqueId(finalRole, u.id, users, bType);
@@ -404,6 +525,7 @@ export class UniqueIdService {
         ...u,
         aponUniqueId: newId,
         permanentMemberId: newId,
+        customerId: finalRole === 'customer_networker' ? newId : u.customerId,
         finalRole,
         businessType: bType
       };
@@ -442,17 +564,29 @@ export class UniqueIdService {
     user: UserProfile,
     newBusinessType: BusinessType
   ): UserProfile {
-    const finalRole = this.normalizeToFinalRole(user.primaryRole);
+    const finalRole = this.normalizeToFinalRole(user.finalRole || user.primaryRole);
     if (finalRole !== 'vendor_dealer_shop') {
       return user;
+    }
+
+    const retainedId = user.aponUniqueId || user.permanentMemberId;
+    if (retainedId) {
+      const allocated = this.getAllocatedIds();
+      if (allocated[retainedId]) {
+        allocated[retainedId] = {
+          ...allocated[retainedId],
+          businessType: newBusinessType
+        };
+        this.saveAllocatedIds(allocated);
+      }
     }
 
     return {
       ...user,
       businessType: newBusinessType,
       // Retain the existing permanent AponVDS ID
-      aponUniqueId: user.aponUniqueId,
-      permanentMemberId: user.aponUniqueId,
+      aponUniqueId: retainedId,
+      permanentMemberId: retainedId,
       updatedAt: new Date().toISOString()
     };
   }

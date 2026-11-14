@@ -9,7 +9,7 @@
  */
 
 import { UserProfile } from '../types';
-import { NetworkMember, ReservedSlot } from '../types/networkMarketing';
+import { COMPANY_MASTER_ROOT_ID, NetworkMember, ReservedSlot } from '../types/networkMarketing';
 import { SlotReservationService } from './SlotReservationService';
 import { UniqueIdService } from './UniqueIdService';
 
@@ -26,6 +26,7 @@ export interface CustomerRegistrationPayload {
   referralId: string;
   placementId?: string;
   position?: 'left' | 'right';
+  reservedCompanyId?: string;
   division: string;
   district: string;
   upazila: string;
@@ -49,6 +50,9 @@ export interface ValidationResult {
 export interface RegistrationExecutionResult {
   success: boolean;
   customerId: string;
+  binaryCompanyId?: string;
+  newLeftBlankId?: string;
+  newRightBlankId?: string;
   username: string;
   fullName: string;
   mobile: string;
@@ -64,6 +68,14 @@ export interface RegistrationExecutionResult {
 }
 
 export class CustomerRegistrationService {
+  /**
+   * Non-mutating preview of the next Customer & Networker ID (AponCN-XXXXXX) for forms.
+   * Does not increment or burn the sequence counter.
+   */
+  static previewUniqueCustomerId(existingUsers: UserProfile[]): string {
+    return UniqueIdService.previewNextUniqueId('customer_networker', existingUsers);
+  }
+
   /**
    * Generates a permanent unique Customer & Networker ID in format AponCN-000001
    * Concurrency-safe atomic generation, never reused, sequence never resets.
@@ -103,24 +115,25 @@ export class CustomerRegistrationService {
 
   /**
    * Validates Refer ID
-   * If empty and source is dashboard or checkout, will default to TMK000001
+   * If empty and source is dashboard or checkout, will default to COMPANY_MASTER_ROOT_ID (GBD000001)
    */
   static validateReferId(
     referId: string,
     members: NetworkMember[],
     allowEmptyDefault: boolean = true
   ): { isValid: boolean; sponsor?: NetworkMember; message?: string } {
+    const registeredMembers = members.filter((m) => m.nodeStatus !== 'blank');
     const clean = referId.trim();
     if (!clean) {
       if (allowEmptyDefault) {
-        const master = members.find((m) => m.id === 'TMK000001') || members[0];
+        const master = registeredMembers.find((m) => m.id === COMPANY_MASTER_ROOT_ID) || registeredMembers[0];
         return { isValid: true, sponsor: master };
       }
       return { isValid: false, message: 'রেফার আইডি আবশ্যক' };
     }
 
     const cleanUpper = clean.toUpperCase();
-    const found = members.find(
+    const found = registeredMembers.find(
       (m) =>
         m.id.toUpperCase() === cleanUpper ||
         (m.customerId && m.customerId.toUpperCase() === cleanUpper) ||
@@ -144,13 +157,14 @@ export class CustomerRegistrationService {
     reservedPlacements: ReservedSlot[] = [],
     currentReservationId?: string
   ): { isValid: boolean; parent?: NetworkMember; message?: string } {
+    const registeredMembers = members.filter((m) => m.nodeStatus !== 'blank');
     const clean = placementId.trim();
     if (!clean) {
       return { isValid: false, message: 'প্লেসমেন্ট আইডি আবশ্যক' };
     }
 
     const cleanUpper = clean.toUpperCase();
-    const parent = members.find(
+    const parent = registeredMembers.find(
       (m) =>
         m.id.toUpperCase() === cleanUpper ||
         (m.customerId && m.customerId.toUpperCase() === cleanUpper) ||

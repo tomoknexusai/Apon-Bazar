@@ -87,9 +87,9 @@ export const CustomerRegistrationTable: React.FC<CustomerRegistrationTableProps>
       })
       .map((u) => {
         const memberInfo = memberMap.get(u.id) || memberMap.get(u.customerId || '') || memberMap.get(u.username || '');
-        const position = memberInfo?.position || memberInfo?.placementLeg || u.placementLeg || (memberInfo?.id === 'TMK000001' ? 'Root' : 'left');
-        const placementId = memberInfo?.parentId || u.placementId || (position === 'Root' ? '-' : 'TMK000001');
-        const referId = memberInfo?.sponsorId || u.sponsorId || u.referralId || 'TMK000001';
+        const position = memberInfo?.position || memberInfo?.placementLeg || u.placementLeg || (memberInfo?.id === 'GBD000001' ? 'Root' : 'left');
+        const placementId = memberInfo?.parentId || u.placementId || (position === 'Root' ? '-' : 'GBD000001');
+        const referId = memberInfo?.sponsorId || u.sponsorId || u.referralId || 'GBD000001';
         
         // Format address
         const address =
@@ -345,7 +345,7 @@ export const CustomerRegistrationTable: React.FC<CustomerRegistrationTableProps>
           onSwitchToLogin={() => setIsRegisterOpen(false)}
           source="dashboard"
           title="Customer Registration"
-          initialReferralId={currentUser?.customerId || 'TMK000001'}
+          initialReferralId={currentUser?.customerId || 'GBD000001'}
         />
       )}
     </div>

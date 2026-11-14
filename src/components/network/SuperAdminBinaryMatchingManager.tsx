@@ -40,6 +40,7 @@ import {
   Calendar,
   Clock,
   User,
+  UserPlus,
   Sliders,
   Sparkles,
   Info,
@@ -52,16 +53,47 @@ import {
   ShieldAlert,
   ArrowDownRight,
   ArrowDownLeft,
+  ArrowLeft,
   RefreshCw,
   FolderTree,
   Activity
 } from 'lucide-react';
+import { CustomerRegistrationModal } from '../auth/CustomerRegistrationModal';
+import { IsolatedSubtreeStats } from '../../lib/binaryBlankPositionEngine';
+
+const TREE_URL_PARAM = 'treeCompanyId';
+
+function getInitialTreeCompanyIdFromUrl(defaultId: string): string {
+  if (typeof window === 'undefined') return defaultId;
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const val = params.get(TREE_URL_PARAM)?.trim();
+    return val || defaultId;
+  } catch {
+    return defaultId;
+  }
+}
+
+function syncTreeCompanyIdToUrl(companyId: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.set(TREE_URL_PARAM, companyId);
+    window.history.replaceState(window.history.state, '', url.toString());
+  } catch {
+    // Ignore history restrictions in constrained frames
+  }
+}
 
 export const SuperAdminBinaryMatchingManager: React.FC = () => {
   const { currentUser, allUsers, addAuditLog } = useAuth();
   const {
     members,
+    allTreeNodes,
+    blankPositions,
+    treeState,
     matchingHistory,
+    fetchIsolatedSubtree,
     executeMemberMatching,
     executeNetworkBatchMatching,
     manualCarryForwardAdjustment,
@@ -73,13 +105,30 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
   // Navigation Tabs: Binary Tree | Matching | Matching History | Member Search | Reports
   const [activeTab, setActiveTab] = useState<'binary_tree' | 'matching' | 'matching_history' | 'member_search' | 'reports'>('binary_tree');
 
-  // Binary Tree State
-  const [focusMemberId, setFocusMemberId] = useState<string>(COMPANY_MASTER_ROOT_ID);
-  const [expandedNodes, setExpandedNodes] = useState<Record<string, boolean>>({
-    [COMPANY_MASTER_ROOT_ID]: true,
-    'GBD000002': true,
-    'GBD000003': true
-  });
+  // Isolated ID-Wise Subtree State (synced with URL for refresh persistence)
+  const [focusMemberId, setFocusMemberId] = useState<string>(() =>
+    getInitialTreeCompanyIdFromUrl(COMPANY_MASTER_ROOT_ID)
+  );
+  const [treeHistoryStack, setTreeHistoryStack] = useState<string[]>([]);
+  const [isolatedNodes, setIsolatedNodes] = useState<NetworkMember[]>([]);
+  const [isolatedStats, setIsolatedStats] = useState<IsolatedSubtreeStats | null>(null);
+  const [isLoadingSubtree, setIsLoadingSubtree] = useState<boolean>(false);
+  const [subtreeError, setSubtreeError] = useState<{
+    statusCode: number;
+    code?: string;
+    message: string;
+    queriedId?: string;
+  } | null>(null);
+  const [selectedLevelFilter, setSelectedLevelFilter] = useState<number | 'all'>('all');
+
+  const [expandedNodes, setExpandedNodes] = useState<Record<string, boolean>>({});
+
+  // Blank Position Click -> Registration Modal State
+  const [registerBlankSlotModal, setRegisterBlankSlotModal] = useState<{
+    reservedCompanyId: string;
+    parentId: string;
+    leg: 'left' | 'right';
+  } | null>(null);
   const [zoomLevel, setZoomLevel] = useState<number>(1);
   const [panOffset, setPanOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
@@ -89,13 +138,19 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
   // Selected Member Details Slide-Over Modal
   const [selectedMemberModal, setSelectedMemberModal] = useState<NetworkMember | null>(null);
 
-  // Quick Tree Search State
-  const [treeSearchQuery, setTreeSearchQuery] = useState('');
+  // Main Company ID Search & Open State
+  const [treeSearchQuery, setTreeSearchQuery] = useState<string>(() =>
+    getInitialTreeCompanyIdFromUrl(COMPANY_MASTER_ROOT_ID) === COMPANY_MASTER_ROOT_ID
+      ? ''
+      : getInitialTreeCompanyIdFromUrl(COMPANY_MASTER_ROOT_ID)
+  );
+  const [inSubtreeFindQuery, setInSubtreeFindQuery] = useState<string>('');
   const [treeSearchHighlightId, setTreeSearchHighlightId] = useState<string | null>(null);
 
   // Dedicated Member Search Tab State
   const [memberSearchQuery, setMemberSearchQuery] = useState('');
   const [searchedMember, setSearchedMember] = useState<NetworkMember | null>(null);
+  const [memberSearchError, setMemberSearchError] = useState<string | null>(null);
 
   // Matching View State
   const [matchingMemberId, setMatchingMemberId] = useState<string>(COMPANY_MASTER_ROOT_ID);
@@ -119,7 +174,7 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
   const [reportStatusFilter, setReportStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [reportSearchQuery, setReportSearchQuery] = useState('');
 
-  // Helper lookup
+  // Helper lookup (registered members for matching/reports tabs)
   const getMemberById = (id?: string): NetworkMember | undefined => {
     if (!id) return undefined;
     const clean = id.trim().toLowerCase();
@@ -132,25 +187,110 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
     );
   };
 
-  const activeFocusMember = getMemberById(focusMemberId) || getMemberById(COMPANY_MASTER_ROOT_ID) || members[0];
-  const activeMatchingMember = getMemberById(matchingMemberId) || activeFocusMember;
+  // Strict isolated map for Binary Tree Canvas (contains ONLY nodes returned by server subtree endpoint)
+  const isolatedNodeMap = useMemo(() => {
+    const map = new Map<string, NetworkMember>();
+    for (const n of isolatedNodes) {
+      map.set(n.id, n);
+    }
+    return map;
+  }, [isolatedNodes]);
 
-  // Breadcrumb path from Company Master Root GBD000001 to currently focused node
-  const breadcrumbPath = useMemo(() => {
-    const path: NetworkMember[] = [];
-    let curr: NetworkMember | undefined = activeFocusMember;
+  const getIsolatedNodeById = (id?: string): NetworkMember | undefined => {
+    if (!id) return undefined;
+    return isolatedNodeMap.get(id);
+  };
+
+  // Helper to build depth-limited or full expansion state for the isolated subtree
+  const computeExpandedForSubtree = (
+    nodes: NetworkMember[],
+    rootId: string,
+    maxLevels: number | 'all'
+  ): Record<string, boolean> => {
+    const byId = new Map<string, NetworkMember>();
+    nodes.forEach((n) => byId.set(n.id, n));
+    const exp: Record<string, boolean> = {};
+    const queue: Array<{ id: string; level: number }> = [{ id: rootId, level: 1 }];
     const visited = new Set<string>();
 
-    while (curr && !visited.has(curr.id)) {
-      visited.add(curr.id);
-      path.unshift(curr);
-      if (!curr.parentId || curr.id === COMPANY_MASTER_ROOT_ID) break;
-      curr = getMemberById(curr.parentId);
-    }
-    return path;
-  }, [activeFocusMember, members]);
+    while (queue.length > 0) {
+      const { id, level } = queue.shift()!;
+      if (visited.has(id)) continue;
+      visited.add(id);
+      const node = byId.get(id);
+      if (!node) continue;
 
-  // Expand / Collapse Helpers
+      const shouldExpand = maxLevels === 'all' ? true : level < maxLevels;
+      if (shouldExpand) {
+        exp[id] = true;
+        const leftId = node.leftChildId || node.leftBlankId;
+        const rightId = node.rightChildId || node.rightBlankId;
+        if (leftId) queue.push({ id: leftId, level: level + 1 });
+        if (rightId) queue.push({ id: rightId, level: level + 1 });
+      }
+    }
+    return exp;
+  };
+
+  // Open any Company ID as an isolated temporary root via server endpoint
+  const openSubtreeById = async (
+    targetId: string,
+    options?: { pushHistory?: boolean; resetZoom?: boolean }
+  ) => {
+    const cleanTarget = (targetId || '').trim();
+    if (!cleanTarget) {
+      setSubtreeError({
+        statusCode: 400,
+        code: 'INVALID_INPUT',
+        message: 'অনুগ্রহ করে একটি বৈধ Company ID লিখুন।'
+      });
+      return;
+    }
+
+    setIsLoadingSubtree(true);
+    const resp = await fetchIsolatedSubtree(cleanTarget);
+    setIsLoadingSubtree(false);
+
+    if (!resp.success || !resp.rootId || !resp.nodes || !resp.stats) {
+      // NEVER render a fake or guessed tree on 404/403
+      setSubtreeError({
+        statusCode: resp.statusCode || 404,
+        code: resp.errorCode,
+        message: resp.message || `Company ID '${cleanTarget}' পাওয়া যায়নি।`,
+        queriedId: cleanTarget
+      });
+      return;
+    }
+
+    if (options?.pushHistory && focusMemberId && focusMemberId.toUpperCase() !== resp.rootId.toUpperCase()) {
+      setTreeHistoryStack((prev) => [...prev, focusMemberId]);
+    }
+
+    setSubtreeError(null);
+    setFocusMemberId(resp.rootId);
+    setIsolatedNodes(resp.nodes);
+    setIsolatedStats(resp.stats);
+    setSelectedLevelFilter('all');
+    setExpandedNodes(computeExpandedForSubtree(resp.nodes, resp.rootId, 'all'));
+    setTreeSearchHighlightId(null);
+    if (options?.resetZoom) {
+      setZoomLevel(1);
+      setPanOffset({ x: 0, y: 0 });
+    }
+    syncTreeCompanyIdToUrl(resp.rootId);
+  };
+
+  // Hydrate isolated subtree on mount, URL change, or tree mutation (e.g. blank slot registration)
+  useEffect(() => {
+    if (!isSuperAdmin) return;
+    openSubtreeById(focusMemberId, { pushHistory: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSuperAdmin, treeState.version]);
+
+  const activeFocusMember = getIsolatedNodeById(focusMemberId) || isolatedNodes[0];
+  const activeMatchingMember = getMemberById(matchingMemberId) || getMemberById(COMPANY_MASTER_ROOT_ID) || members[0];
+
+  // Expand / Collapse / Level Navigation Helpers (scoped strictly to isolated subtree)
   const toggleNodeExpansion = (nodeId: string) => {
     setExpandedNodes((prev) => ({
       ...prev,
@@ -159,30 +299,43 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
   };
 
   const expandAllNodes = () => {
-    const allExpanded: Record<string, boolean> = {};
-    members.forEach((m) => {
-      allExpanded[m.id] = true;
-    });
-    setExpandedNodes(allExpanded);
+    setSelectedLevelFilter('all');
+    setExpandedNodes(computeExpandedForSubtree(isolatedNodes, focusMemberId, 'all'));
   };
 
   const collapseAllNodes = () => {
-    setExpandedNodes({ [COMPANY_MASTER_ROOT_ID]: true });
+    setSelectedLevelFilter(1);
+    setExpandedNodes({});
+  };
+
+  const handleSelectTreeLevel = (levelVal: number | 'all') => {
+    setSelectedLevelFilter(levelVal);
+    setExpandedNodes(computeExpandedForSubtree(isolatedNodes, focusMemberId, levelVal));
+  };
+
+  const handleGoBackRoot = () => {
+    if (treeHistoryStack.length === 0) return;
+    const prevRoot = treeHistoryStack[treeHistoryStack.length - 1];
+    setTreeHistoryStack((prev) => prev.slice(0, -1));
+    setTreeSearchQuery(prevRoot === COMPANY_MASTER_ROOT_ID ? '' : prevRoot);
+    openSubtreeById(prevRoot, { pushHistory: false, resetZoom: true });
   };
 
   const resetTreeView = () => {
     setZoomLevel(1);
     setPanOffset({ x: 0, y: 0 });
-    setFocusMemberId(COMPANY_MASTER_ROOT_ID);
+    setTreeHistoryStack([]);
+    setTreeSearchQuery('');
+    openSubtreeById(COMPANY_MASTER_ROOT_ID, { pushHistory: false });
   };
 
   // Zoom handlers
   const handleZoomIn = () => setZoomLevel((prev) => Math.min(prev + 0.15, 2.0));
-  const handleZoomOut = () => setZoomLevel((prev) => Math.max(prev - 0.15, 0.5));
+  const handleZoomOut = () => setZoomLevel((prev) => Math.max(prev - 0.15, 0.4));
 
   // Canvas Pan Drag Handlers
   const handleMouseDown = (e: React.MouseEvent) => {
-    if ((e.target as HTMLElement).closest('button, input, a')) return;
+    if ((e.target as HTMLElement).closest('button, input, select, a')) return;
     setIsDragging(true);
     setDragStart({ x: e.clientX - panOffset.x, y: e.clientY - panOffset.y });
   };
@@ -197,34 +350,57 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
 
   const handleMouseUp = () => setIsDragging(false);
 
-  // Quick Tree Search
+  // Main Search & Open Handler: Opens entered Company ID as Isolated Temporary Root
   const handleTreeSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!treeSearchQuery.trim()) return;
-    const q = treeSearchQuery.trim().toLowerCase();
-    const match = members.find(
+    const clean = treeSearchQuery.trim();
+    if (!clean) {
+      setSubtreeError({
+        statusCode: 400,
+        code: 'INVALID_INPUT',
+        message: 'অনুগ্রহ করে একটি Company ID লিখুন (যেমন: GBD000001, GBD000002, GBD000008)।'
+      });
+      return;
+    }
+    openSubtreeById(clean, { pushHistory: true, resetZoom: true });
+  };
+
+  // Quick Find & Highlight strictly within the currently loaded isolated subtree
+  const handleFindInsideSubtree = (e: React.FormEvent) => {
+    e.preventDefault();
+    const q = inSubtreeFindQuery.trim().toLowerCase();
+    if (!q) {
+      setTreeSearchHighlightId(null);
+      return;
+    }
+    const match = isolatedNodes.find(
       (m) =>
+        m.id.toLowerCase() === q ||
         m.id.toLowerCase().includes(q) ||
         m.fullName.toLowerCase().includes(q) ||
-        (m.mobile && m.mobile.includes(q))
+        (m.mobile && m.mobile.includes(q)) ||
+        (m.aponUniqueId && m.aponUniqueId.toLowerCase().includes(q))
     );
 
     if (match) {
       setTreeSearchHighlightId(match.id);
-      setFocusMemberId(match.id);
-      setExpandedNodes((prev) => ({ ...prev, [match.id]: true }));
-      // Ensure parents are expanded
-      let curr = match;
-      const newExp = { ...expandedNodes, [match.id]: true };
-      while (curr.parentId) {
+      const newExp: Record<string, boolean> = { ...expandedNodes, [match.id]: true };
+      let curr: NetworkMember | undefined = match;
+      const visited = new Set<string>();
+      while (curr?.parentId && !visited.has(curr.id)) {
+        visited.add(curr.id);
         newExp[curr.parentId] = true;
-        const parent = getMemberById(curr.parentId);
-        if (!parent) break;
-        curr = parent;
+        curr = getIsolatedNodeById(curr.parentId);
       }
       setExpandedNodes(newExp);
     } else {
-      alert(`মেম্বার '${treeSearchQuery}' নেটওয়ার্কে পাওয়া যায়নি।`);
+      setTreeSearchHighlightId(null);
+      setSubtreeError({
+        statusCode: 404,
+        code: 'NOT_FOUND',
+        message: `বর্তমান নেটওয়ার্ক (${focusMemberId})-এর ভেতরে '${inSubtreeFindQuery}' পাওয়া যায়নি।`,
+        queriedId: inSubtreeFindQuery
+      });
     }
   };
 
@@ -241,10 +417,11 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
         (m.mobile && m.mobile.includes(q))
     );
     if (match) {
+      setMemberSearchError(null);
       setSearchedMember(match);
     } else {
-      alert(`মেম্বার আইডি, নাম বা মোবাইল '${memberSearchQuery}' দিয়ে কোনো সদস্য খুঁজে পাওয়া যায়নি।`);
       setSearchedMember(null);
+      setMemberSearchError(`মেম্বার আইডি, নাম বা মোবাইল '${memberSearchQuery}' দিয়ে কোনো সদস্য খুঁজে পাওয়া যায়নি।`);
     }
   };
 
@@ -494,7 +671,7 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
     );
   }
 
-  // Recursive Tree Node Renderer
+  // Recursive Tree Node Renderer (supports Registered Nodes & Pre-Reserved Left/Right Blank Positions at all levels)
   const renderTreeNode = (memberId: string | undefined, positionLabel: 'ROOT' | 'LEFT' | 'RIGHT', depth: number): React.ReactNode => {
     if (!memberId) {
       return (
@@ -509,16 +686,84 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
       );
     }
 
-    const member = getMemberById(memberId);
-    if (!member) return null;
+    const node = getIsolatedNodeById(memberId);
+    if (!node) return null;
 
-    const isRoot = member.id === COMPANY_MASTER_ROOT_ID;
+    // ------------------------------------------------------------------
+    // BLANK POSITION NODE (Pre-Reserved Sequential Company ID, Click-to-Register)
+    // ------------------------------------------------------------------
+    if (node.nodeStatus === 'blank') {
+      const isLeftBlank = (node.placementLeg || positionLabel.toLowerCase()) === 'left';
+      const isBlankHighlighted = treeSearchHighlightId === node.id;
+      const parentId = node.parentId || focusMemberId;
+
+      return (
+        <div className="flex flex-col items-center">
+          <button
+            type="button"
+            onClick={() =>
+              setRegisterBlankSlotModal({
+                reservedCompanyId: node.id,
+                parentId,
+                leg: isLeftBlank ? 'left' : 'right'
+              })
+            }
+            className={`w-56 rounded-2xl p-3.5 border-2 border-dashed text-left transition-all cursor-pointer shadow-xs hover:shadow-md hover:scale-[1.02] group ${
+              isBlankHighlighted
+                ? 'ring-4 ring-amber-400 border-amber-500 bg-amber-50 dark:bg-amber-950/80'
+                : isLeftBlank
+                ? 'border-blue-400/80 dark:border-blue-700 bg-blue-50/60 dark:bg-blue-950/25 hover:border-blue-500'
+                : 'border-indigo-400/80 dark:border-indigo-700 bg-indigo-50/60 dark:bg-indigo-950/25 hover:border-indigo-500'
+            }`}
+          >
+            <div className="flex items-center justify-between gap-1 mb-1.5">
+              <span
+                className={`text-[10px] font-black px-2 py-0.5 rounded-md uppercase tracking-wider ${
+                  isLeftBlank
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-indigo-600 text-white'
+                }`}
+              >
+                {isLeftBlank ? 'LEFT BLANK' : 'RIGHT BLANK'}
+              </span>
+              <span className="text-[10px] font-bold text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-950/80 px-1.5 py-0.5 rounded flex items-center gap-0.5">
+                <Lock className="w-2.5 h-2.5" />
+                Reserved
+              </span>
+            </div>
+
+            <div className="font-mono font-black text-sm text-neutral-900 dark:text-white tracking-tight">
+              [{node.id}]
+            </div>
+
+            <div className="text-[11px] text-neutral-500 dark:text-neutral-400 font-medium mt-0.5 flex items-center justify-between">
+              <span>Status: <strong className="text-amber-700 dark:text-amber-300">BLANK</strong></span>
+              <span>Parent: <strong className="font-mono text-neutral-700 dark:text-neutral-200">{parentId}</strong></span>
+            </div>
+
+            <div
+              className={`mt-2.5 w-full py-1.5 px-2 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1.5 text-white transition-colors ${
+                isLeftBlank
+                  ? 'bg-blue-600 group-hover:bg-blue-700'
+                  : 'bg-indigo-600 group-hover:bg-indigo-700'
+              }`}
+            >
+              <UserPlus className="w-3.5 h-3.5" />
+              <span>Click to Register</span>
+            </div>
+          </button>
+        </div>
+      );
+    }
+
+    const member = node;
+    const isTemporaryRoot = member.id === focusMemberId;
+    const isCompanyMaster = member.id === COMPANY_MASTER_ROOT_ID;
     const isExpanded = !!expandedNodes[member.id];
     const isHighlighted = treeSearchHighlightId === member.id;
-    const hasChildren = !!member.leftChildId || !!member.rightChildId;
-
-    // Matching metrics for the node
-    const potentialMatch = Math.min(member.leftCarryForward || 0, member.rightCarryForward || 0);
+    const leftTargetId = member.leftChildId || member.leftBlankId;
+    const rightTargetId = member.rightChildId || member.rightBlankId;
+    const hasChildren = !!leftTargetId || !!rightTargetId;
 
     return (
       <div className="flex flex-col items-center">
@@ -527,7 +772,7 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
           className={`relative rounded-2xl p-4 transition-all w-60 shadow-xs border cursor-pointer ${
             isHighlighted
               ? 'ring-4 ring-amber-400 border-amber-500 bg-amber-50/90 dark:bg-amber-950/90'
-              : isRoot
+              : isTemporaryRoot
               ? 'bg-gradient-to-b from-emerald-50 to-white dark:from-emerald-950 dark:to-neutral-900 border-emerald-500 ring-2 ring-emerald-400/40'
               : 'bg-white dark:bg-neutral-900 border-neutral-200 dark:border-neutral-800 hover:border-emerald-400'
           }`}
@@ -537,14 +782,14 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
           <div className="flex items-center justify-between gap-1 mb-2">
             <span
               className={`text-2xs font-black px-2 py-0.5 rounded-md uppercase tracking-wider ${
-                isRoot
+                isTemporaryRoot
                   ? 'bg-emerald-600 text-white'
                   : positionLabel === 'LEFT'
                   ? 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300'
                   : 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300'
               }`}
             >
-              {isRoot ? 'COMPANY ROOT' : positionLabel}
+              {isCompanyMaster ? 'COMPANY ROOT' : isTemporaryRoot ? 'SELECTED ROOT' : positionLabel}
             </span>
             <span className="text-xs font-mono font-black text-neutral-900 dark:text-neutral-100">
               {member.id}
@@ -588,12 +833,12 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
-                setFocusMemberId(member.id);
+                openSubtreeById(member.id, { pushHistory: true, resetZoom: true });
               }}
               className="text-emerald-600 hover:text-emerald-700 font-bold flex items-center gap-0.5 cursor-pointer"
-              title="Set as Focus Root"
+              title="Open this Member's Isolated Subtree"
             >
-              <span>ফোকাস</span>
+              <span>ট্রি খুলুন</span>
               <ChevronRight className="w-3 h-3" />
             </button>
 
@@ -646,22 +891,22 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
 
             {/* Horizontal branch line connecting left and right */}
             <div className="flex items-start">
-              {/* Left Subtree */}
+              {/* Left Subtree (Registered Member or Pre-Reserved Left Blank Position) */}
               <div className="flex flex-col items-center px-4 relative">
                 {/* Horizontal line to left */}
                 <div className="absolute top-0 right-1/2 w-full h-0.5 bg-neutral-300 dark:bg-neutral-700 translate-x-1/2" />
                 {/* Vertical stem down to left child */}
                 <div className="w-0.5 h-6 bg-neutral-300 dark:bg-neutral-700 z-1" />
-                {renderTreeNode(member.leftChildId, 'LEFT', depth + 1)}
+                {renderTreeNode(leftTargetId, 'LEFT', depth + 1)}
               </div>
 
-              {/* Right Subtree */}
+              {/* Right Subtree (Registered Member or Pre-Reserved Right Blank Position) */}
               <div className="flex flex-col items-center px-4 relative">
                 {/* Horizontal line to right */}
                 <div className="absolute top-0 left-1/2 w-full h-0.5 bg-neutral-300 dark:bg-neutral-700 -translate-x-1/2" />
                 {/* Vertical stem down to right child */}
                 <div className="w-0.5 h-6 bg-neutral-300 dark:bg-neutral-700 z-1" />
-                {renderTreeNode(member.rightChildId, 'RIGHT', depth + 1)}
+                {renderTreeNode(rightTargetId, 'RIGHT', depth + 1)}
               </div>
             </div>
           </div>
@@ -683,17 +928,20 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
               </h2>
             </div>
             <p className="text-xs text-emerald-100/90 mt-1">
-              কোম্পানি মাস্টার আইডি: <span className="font-mono font-bold text-amber-300">{COMPANY_MASTER_ROOT_ID}</span> থেকে পরিচালিত পূর্ণাঙ্গ টু-লেগ বাইনারি প্লেসমেন্ট, স্পন্সর পৃথকীকরণ ও ম্যাচিং হিসাব।
+              কোম্পানি মাস্টার আইডি: <span className="font-mono font-bold text-amber-300">{COMPANY_MASTER_ROOT_ID}</span> থেকে পরিচালিত পূর্ণাঙ্গ টু-লেগ বাইনারি প্লেসমেন্ট, প্রি-রিজার্ভড Blank Positions ও ম্যাচিং হিসাব।
             </p>
           </div>
 
-          <div className="flex items-center gap-2 text-xs">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
             <div className="bg-emerald-800/70 border border-emerald-500/40 rounded-xl px-3 py-1.5 flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
               <span>রুট নোড: <strong className="font-mono text-amber-300">{COMPANY_MASTER_ROOT_ID}</strong></span>
             </div>
             <div className="bg-white/10 rounded-xl px-3 py-1.5">
-              <span>মোট সদস্য: <strong>{members.length}</strong></span>
+              <span>নিবন্ধিত সদস্য: <strong>{members.length}</strong></span>
+            </div>
+            <div className="bg-amber-500/20 border border-amber-400/40 rounded-xl px-3 py-1.5 text-amber-200">
+              <span>Blank Positions: <strong>{blankPositions.length}</strong></span>
             </div>
           </div>
         </div>
@@ -772,70 +1020,169 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
         </div>
       </div>
 
-      {/* TAB 1: BINARY TREE INTERACTIVE CANVAS */}
+      {/* TAB 1: BINARY TREE INTERACTIVE CANVAS (ID-WISE ISOLATED SUBTREE) */}
       {activeTab === 'binary_tree' && (
         <div className="space-y-4">
-          {/* Controls Bar: Breadcrumbs, Search, Zoom, Expand/Collapse */}
-          <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl p-4 shadow-xs flex flex-wrap items-center justify-between gap-3 text-xs">
-            {/* Breadcrumb Path from GBD000001 */}
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-neutral-500 font-medium">রুট পথ:</span>
-              <button
-                type="button"
-                onClick={() => setFocusMemberId(COMPANY_MASTER_ROOT_ID)}
-                className={`font-mono font-bold px-2 py-1 rounded-md transition-colors cursor-pointer ${
-                  focusMemberId === COMPANY_MASTER_ROOT_ID
-                    ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                    : 'text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800'
-                }`}
-              >
-                {COMPANY_MASTER_ROOT_ID} (Root)
-              </button>
+          {/* Isolated Subtree Header: Search & Open + Required Stats + Back Navigation */}
+          <div className="bg-white dark:bg-neutral-900 border border-emerald-200 dark:border-emerald-900/60 rounded-2xl p-4 shadow-xs space-y-3">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+              {/* ID Search & Open Form */}
+              <form onSubmit={handleTreeSearch} className="flex flex-wrap items-center gap-2 flex-1">
+                <div className="relative flex-1 min-w-[240px] max-w-md">
+                  <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-emerald-600" />
+                  <input
+                    type="text"
+                    aria-label="Enter Company ID to View Network"
+                    placeholder="Enter Company ID to View Network"
+                    value={treeSearchQuery}
+                    onChange={(e) => {
+                      setTreeSearchQuery(e.target.value);
+                      if (subtreeError) setSubtreeError(null);
+                    }}
+                    className="w-full pl-9 pr-3 py-2 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800 text-xs font-mono font-bold text-neutral-900 dark:text-white focus:ring-2 focus:ring-emerald-500 outline-none"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={isLoadingSubtree}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white text-xs font-bold rounded-xl cursor-pointer flex items-center gap-1.5 shadow-xs"
+                >
+                  {isLoadingSubtree ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <FolderTree className="w-3.5 h-3.5" />}
+                  <span>Open Network</span>
+                </button>
 
-              {breadcrumbPath.map((node, idx) => {
-                if (node.id === COMPANY_MASTER_ROOT_ID) return null;
-                const isLast = idx === breadcrumbPath.length - 1;
-                return (
-                  <React.Fragment key={node.id}>
-                    <ChevronRight className="w-3.5 h-3.5 text-neutral-400" />
-                    <button
-                      type="button"
-                      onClick={() => setFocusMemberId(node.id)}
-                      className={`font-mono font-bold px-2 py-0.5 rounded-md transition-colors cursor-pointer ${
-                        isLast
-                          ? 'bg-emerald-600 text-white'
-                          : 'text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100'
-                      }`}
-                    >
-                      {node.id}
-                    </button>
-                  </React.Fragment>
-                );
-              })}
+                {treeHistoryStack.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleGoBackRoot}
+                    className="px-3 py-2 bg-neutral-100 hover:bg-neutral-200 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-neutral-800 dark:text-neutral-200 text-xs font-bold rounded-xl cursor-pointer flex items-center gap-1.5 border border-neutral-300 dark:border-neutral-700"
+                  >
+                    <ArrowLeft className="w-3.5 h-3.5" />
+                    <span>Back ({treeHistoryStack[treeHistoryStack.length - 1]})</span>
+                  </button>
+                )}
+
+                {focusMemberId !== COMPANY_MASTER_ROOT_ID && (
+                  <button
+                    type="button"
+                    onClick={resetTreeView}
+                    className="px-3 py-2 bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300 text-xs font-bold rounded-xl cursor-pointer border border-amber-300 dark:border-amber-800"
+                  >
+                    Master Root ({COMPANY_MASTER_ROOT_ID})
+                  </button>
+                )}
+              </form>
+
+              {/* Required Tree Header Counters */}
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <div className="px-3 py-1.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800">
+                  <span className="text-neutral-500 dark:text-neutral-400">Selected Company ID: </span>
+                  <strong className="font-mono font-black text-emerald-700 dark:text-emerald-300">
+                    {isolatedStats?.selectedCompanyId || focusMemberId}
+                  </strong>
+                </div>
+                <div className="px-3 py-1.5 rounded-xl bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800">
+                  <span className="text-neutral-500 dark:text-neutral-400">Network Members: </span>
+                  <strong className="font-mono font-black text-blue-700 dark:text-blue-300">
+                    {isolatedStats?.networkMembers ?? 0}
+                  </strong>
+                </div>
+                <div className="px-3 py-1.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800">
+                  <span className="text-neutral-500 dark:text-neutral-400">Tree Levels: </span>
+                  <strong className="font-mono font-black text-indigo-700 dark:text-indigo-300">
+                    {isolatedStats?.treeLevels ?? 0}
+                  </strong>
+                </div>
+                <div className="px-3 py-1.5 rounded-xl bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800">
+                  <span className="text-neutral-500 dark:text-neutral-400">Blank Positions: </span>
+                  <strong className="font-mono font-black text-amber-700 dark:text-amber-300">
+                    {isolatedStats?.blankPositions ?? 0}
+                  </strong>
+                </div>
+              </div>
             </div>
 
-            {/* Tree Quick Search */}
-            <form onSubmit={handleTreeSearch} className="flex items-center gap-1.5">
+            <div className="text-[11px] text-neutral-500 dark:text-neutral-400 flex flex-wrap items-center justify-between gap-2">
+              <span>
+                উদাহরণ: <code className="font-mono font-bold text-neutral-700 dark:text-neutral-300">GBD000001</code>,{' '}
+                <code className="font-mono font-bold text-neutral-700 dark:text-neutral-300">GBD000002</code>,{' '}
+                <code className="font-mono font-bold text-neutral-700 dark:text-neutral-300">GBD000004</code>,{' '}
+                <code className="font-mono font-bold text-neutral-700 dark:text-neutral-300">GBD000008</code> — শুধুমাত্র নির্বাচিত ID-এর অধীনস্থ নেটওয়ার্কই প্রদর্শিত হবে।
+              </span>
+            </div>
+
+            {/* Not Found / Access Denied Error Banner (NEVER renders fake or guessed tree) */}
+            {subtreeError && (
+              <div
+                role="alert"
+                className={`p-3.5 rounded-xl border text-xs flex items-center justify-between gap-3 ${
+                  subtreeError.statusCode === 403
+                    ? 'bg-red-50 dark:bg-red-950/50 border-red-300 dark:border-red-800 text-red-900 dark:text-red-200'
+                    : 'bg-amber-50 dark:bg-amber-950/50 border-amber-300 dark:border-amber-800 text-amber-950 dark:text-amber-200'
+                }`}
+              >
+                <div className="flex items-center gap-2 font-bold">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <span>{subtreeError.message}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSubtreeError(null)}
+                  className="text-[11px] underline font-bold cursor-pointer shrink-0"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Controls Bar: Subtree Highlight, Level Navigation, Zoom, Expand/Collapse */}
+          <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl p-3.5 shadow-xs flex flex-wrap items-center justify-between gap-3 text-xs">
+            {/* Find inside currently opened subtree */}
+            <form onSubmit={handleFindInsideSubtree} className="flex items-center gap-1.5">
               <div className="relative">
                 <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-400" />
                 <input
                   type="text"
-                  placeholder="মেম্বার আইডি / নাম খুঁজুন..."
-                  value={treeSearchQuery}
-                  onChange={(e) => setTreeSearchQuery(e.target.value)}
+                  placeholder="এই ট্রির ভেতরে খুঁজুন..."
+                  value={inSubtreeFindQuery}
+                  onChange={(e) => setInSubtreeFindQuery(e.target.value)}
                   className="pl-8 pr-3 py-1.5 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800 text-xs w-48 font-medium"
                 />
               </div>
               <button
                 type="submit"
-                className="px-3 py-1.5 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 cursor-pointer"
+                className="px-3 py-1.5 bg-neutral-800 dark:bg-neutral-700 text-white font-bold rounded-xl hover:bg-neutral-900 cursor-pointer"
               >
-                খুঁজুন
+                Highlight
               </button>
             </form>
 
-            {/* Canvas Actions: Zoom, Reset, Expand All, Collapse All */}
+            {/* Level Navigation */}
             <div className="flex items-center gap-1.5">
+              <Layers className="w-3.5 h-3.5 text-emerald-600" />
+              <span className="text-neutral-500 font-semibold">Level View:</span>
+              <select
+                aria-label="Tree Level Navigation"
+                value={selectedLevelFilter === 'all' ? 'all' : String(selectedLevelFilter)}
+                onChange={(e) =>
+                  handleSelectTreeLevel(e.target.value === 'all' ? 'all' : Number(e.target.value))
+                }
+                className="bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-xl px-2.5 py-1.5 text-xs font-bold"
+              >
+                <option value="all">All Levels ({isolatedStats?.treeLevels || 1})</option>
+                {Array.from({ length: Math.max(1, isolatedStats?.treeLevels || 1) }, (_, idx) => idx + 1).map(
+                  (lvl) => (
+                    <option key={lvl} value={String(lvl)}>
+                      Up to Level {lvl}
+                    </option>
+                  )
+                )}
+              </select>
+            </div>
+
+            {/* Canvas Actions: Zoom, Reset, Expand All, Collapse All */}
+            <div className="flex items-center gap-1.5 flex-wrap">
               <div className="flex items-center bg-neutral-100 dark:bg-neutral-800 rounded-xl p-1 border border-neutral-200 dark:border-neutral-700">
                 <button
                   type="button"
@@ -858,9 +1205,12 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
                 </button>
                 <button
                   type="button"
-                  onClick={resetTreeView}
+                  onClick={() => {
+                    setZoomLevel(1);
+                    setPanOffset({ x: 0, y: 0 });
+                  }}
                   className="p-1.5 hover:bg-white dark:hover:bg-neutral-700 rounded-lg text-neutral-700 dark:text-neutral-300 cursor-pointer ml-1"
-                  title="Reset View (100% / Root)"
+                  title="Reset Zoom & Pan"
                 >
                   <RotateCcw className="w-4 h-4" />
                 </button>
@@ -871,14 +1221,14 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
                 onClick={expandAllNodes}
                 className="px-2.5 py-1.5 bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-200 rounded-xl text-neutral-700 dark:text-neutral-300 font-medium cursor-pointer"
               >
-                সব খুলুন (Expand All)
+                Expand All
               </button>
               <button
                 type="button"
                 onClick={collapseAllNodes}
                 className="px-2.5 py-1.5 bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-200 rounded-xl text-neutral-700 dark:text-neutral-300 font-medium cursor-pointer"
               >
-                সংকোচন (Collapse All)
+                Collapse All
               </button>
             </div>
           </div>
@@ -890,7 +1240,7 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
             onMouseLeave={handleMouseUp}
-            className="relative bg-neutral-100/70 dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800 rounded-3xl min-h-[580px] overflow-hidden select-none cursor-grab active:cursor-grabbing p-8 flex justify-center"
+            className="relative bg-neutral-100/70 dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800 rounded-3xl min-h-[580px] overflow-auto select-none cursor-grab active:cursor-grabbing p-8 flex justify-center"
           >
             {/* Background Grid Pattern */}
             <div
@@ -901,17 +1251,31 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
               }}
             />
 
-            {/* Transform Canvas Layer */}
-            <div
-              style={{
-                transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoomLevel})`,
-                transformOrigin: 'top center',
-                transition: isDragging ? 'none' : 'transform 0.15s ease-out'
-              }}
-              className="inline-block py-6"
-            >
-              {renderTreeNode(activeFocusMember.id, activeFocusMember.id === COMPANY_MASTER_ROOT_ID ? 'ROOT' : (activeFocusMember.position as any || 'LEFT'), 0)}
-            </div>
+            {subtreeError && (!activeFocusMember || subtreeError.queriedId?.toUpperCase() !== focusMemberId.toUpperCase()) ? null : null}
+
+            {/* Render ONLY if activeFocusMember exists in isolated server response and no blocking error for current query */}
+            {subtreeError && subtreeError.statusCode === 404 && !activeFocusMember ? (
+              <div className="relative z-10 m-auto text-center p-8 bg-white dark:bg-neutral-900 rounded-2xl border border-amber-300 max-w-md space-y-2">
+                <AlertTriangle className="w-10 h-10 text-amber-500 mx-auto" />
+                <h4 className="font-black text-base text-neutral-900 dark:text-white">Company ID Not Found</h4>
+                <p className="text-xs text-neutral-600 dark:text-neutral-300">{subtreeError.message}</p>
+              </div>
+            ) : activeFocusMember ? (
+              <div
+                style={{
+                  transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoomLevel})`,
+                  transformOrigin: 'top center',
+                  transition: isDragging ? 'none' : 'transform 0.15s ease-out'
+                }}
+                className="inline-block py-6 relative z-10"
+              >
+                {renderTreeNode(activeFocusMember.id, 'ROOT', 0)}
+              </div>
+            ) : (
+              <div className="relative z-10 m-auto text-center text-xs text-neutral-500">
+                {isLoadingSubtree ? 'নেটওয়ার্ক ট্রি লোড হচ্ছে...' : 'সঠিক Company ID লিখে Open Network চাপুন।'}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1300,9 +1664,8 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => {
-                        setFocusMemberId(searchedMember.id);
-                        setTreeSearchHighlightId(searchedMember.id);
                         setActiveTab('binary_tree');
+                        openSubtreeById(searchedMember.id, { pushHistory: true, resetZoom: true });
                       }}
                       className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 cursor-pointer shadow-xs"
                     >
@@ -1449,6 +1812,11 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
                   )}
                 </div>
               </div>
+            </div>
+          ) : memberSearchError ? (
+            <div className="bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 rounded-3xl p-8 text-center text-amber-900 dark:text-amber-200 space-y-2">
+              <AlertTriangle className="w-10 h-10 mx-auto text-amber-500" />
+              <p className="text-sm font-bold">{memberSearchError}</p>
             </div>
           ) : (
             <div className="bg-neutral-50 dark:bg-neutral-900/50 border border-dashed border-neutral-300 dark:border-neutral-700 rounded-3xl p-12 text-center text-neutral-400">
@@ -1701,7 +2069,27 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
                       <span>{getMemberById(selectedMemberModal.leftChildId)?.fullName}</span>
                     </div>
                   ) : (
-                    <span className="text-neutral-400">খালি স্লট</span>
+                    <div className="space-y-1">
+                      <span className="text-blue-600 dark:text-blue-400 font-mono font-bold block">
+                        LEFT BLANK: {selectedMemberModal.leftBlankId || 'AUTO'}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const targetParent = selectedMemberModal.id;
+                          const reservedId = selectedMemberModal.leftBlankId || '';
+                          setSelectedMemberModal(null);
+                          setRegisterBlankSlotModal({
+                            reservedCompanyId: reservedId,
+                            parentId: targetParent,
+                            leg: 'left'
+                          });
+                        }}
+                        className="text-[11px] font-bold text-emerald-600 hover:underline cursor-pointer"
+                      >
+                        + এই পজিশনে নিবন্ধন করুন
+                      </button>
+                    </div>
                   )}
                 </div>
 
@@ -1713,7 +2101,27 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
                       <span>{getMemberById(selectedMemberModal.rightChildId)?.fullName}</span>
                     </div>
                   ) : (
-                    <span className="text-neutral-400">খালি স্লট</span>
+                    <div className="space-y-1">
+                      <span className="text-indigo-600 dark:text-indigo-400 font-mono font-bold block">
+                        RIGHT BLANK: {selectedMemberModal.rightBlankId || 'AUTO'}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const targetParent = selectedMemberModal.id;
+                          const reservedId = selectedMemberModal.rightBlankId || '';
+                          setSelectedMemberModal(null);
+                          setRegisterBlankSlotModal({
+                            reservedCompanyId: reservedId,
+                            parentId: targetParent,
+                            leg: 'right'
+                          });
+                        }}
+                        className="text-[11px] font-bold text-emerald-600 hover:underline cursor-pointer"
+                      >
+                        + এই পজিশনে নিবন্ধন করুন
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>
@@ -1723,9 +2131,10 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => {
-                    setFocusMemberId(selectedMemberModal.id);
+                    const targetId = selectedMemberModal.id;
                     setSelectedMemberModal(null);
                     setActiveTab('binary_tree');
+                    openSubtreeById(targetId, { pushHistory: true, resetZoom: true });
                   }}
                   className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer"
                 >
@@ -1868,6 +2277,31 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
             </form>
           </div>
         </div>
+      )}
+
+      {/* MODAL 3: RESERVED BLANK POSITION REGISTRATION (LOCKED COMPANY ID + PARENT + POSITION) */}
+      {registerBlankSlotModal && (
+        <CustomerRegistrationModal
+          isOpen={true}
+          onClose={() => setRegisterBlankSlotModal(null)}
+          onSwitchToLogin={() => setRegisterBlankSlotModal(null)}
+          source="binary_tree"
+          title={`বাইনারি মেম্বার নিবন্ধন (${registerBlankSlotModal.reservedCompanyId})`}
+          subtitle={`Parent: ${registerBlankSlotModal.parentId} • Position: ${registerBlankSlotModal.leg.toUpperCase()}`}
+          reservedCompanyId={registerBlankSlotModal.reservedCompanyId}
+          initialReferralId={registerBlankSlotModal.parentId}
+          initialPlacementId={registerBlankSlotModal.parentId}
+          initialPlacementPosition={registerBlankSlotModal.leg}
+          lockPlacement={true}
+          onSuccess={(summary) => {
+            openSubtreeById(focusMemberId, { pushHistory: false });
+            setExpandedNodes((prev) => ({
+              ...prev,
+              [registerBlankSlotModal.parentId]: true,
+              ...(summary.binaryCompanyId ? { [summary.binaryCompanyId]: true } : {})
+            }));
+          }}
+        />
       )}
     </div>
   );

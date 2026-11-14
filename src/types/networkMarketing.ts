@@ -33,7 +33,67 @@ export interface IdGradeConfig {
   badgeClass?: string;
 }
 
-export const COMPANY_MASTER_ROOT_ID = 'GBD000001';
+export const COMPANY_MASTER_ROOT_ID = 'AB-1000000001';
+export const LEGACY_COMPANY_MASTER_ROOT_ID = 'GBD000001';
+
+export type EmailDeliveryStatus = 'sent' | 'pending' | 'failed' | 'retry_queued';
+
+export interface EmailDeliveryRecord {
+  id: string;
+  idempotencyKey: string;
+  customerId: string;
+  recipientEmail: string;
+  recipientName: string;
+  subject: string;
+  templateType: 'registration_confirmation';
+  status: EmailDeliveryStatus;
+  attempts: number;
+  retryQueued: boolean;
+  lastAttemptAt: string;
+  sentAt?: string;
+  messageId?: string;
+  errorReason?: string;
+  payloadSummary: {
+    customerName: string;
+    customerId: string;
+    referralId: string;
+    placementId: string;
+    placementPosition: 'LEFT' | 'RIGHT' | 'ROOT';
+    registrationDate: string;
+    loginUrl: string;
+  };
+}
+
+export interface IdMigrationMapping {
+  oldId: string;
+  newId: string;
+  internalId: string;
+  nodeType: 'registered' | 'blank_to_slot' | 'customer_user';
+  fullName?: string;
+  legacyAliases?: string[];
+  migratedAt: string;
+  batchId: string;
+}
+
+export interface IdMigrationReport {
+  batchId: string;
+  migratedAt: string;
+  previousRootId: string;
+  newRootId: string;
+  totalRegisteredMigrated: number;
+  totalBlankSlotsConverted: number;
+  totalMatchingRecordsUpdated: number;
+  duplicateIdsCount: number;
+  brokenLinksCount: number;
+  totalPersonalPVBefore: number;
+  totalPersonalPVAfter: number;
+  totalMatchedPVBefore: number;
+  totalMatchedPVAfter: number;
+  pvConserved: boolean;
+  backupSnapshotPath: string;
+  rollbackAvailable: boolean;
+  notes: string[];
+}
 
 export interface MatchingRecord {
   matching_id: string;
@@ -53,16 +113,24 @@ export interface MatchingRecord {
 
 export interface NetworkMember {
   id: string;
+  internalId?: string; // Immutable internal UUID/key
+  slotId?: string; // Tree slot identifier for blank slots (e.g. SLOT-AB-1000000001-LEFT)
+  isBlankSlot?: boolean; // Explicit flag differentiating Blank Tree Slots from Customer IDs
+  legacyId?: string; // Previous ID prior to AB- migration (e.g. GBD000001)
   member_id?: string; // Relational database alias
   userId: string;
   username?: string; // Manual User ID (e.g. Mirzabd)
-  customerId?: string; // Auto-generated permanent Customer ID (e.g. CUST-100001)
+  customerId?: string; // Auto-generated permanent Customer ID (e.g. AB-1000000002)
   permanentMemberId?: string; // Permanent unique identifier
   fullName: string;
   full_name?: string; // Relational database alias
   mobile: string;
   email: string;
   address?: string;
+  nidNumber?: string; // Identity verification number (NID / Passport)
+  kycStatus?: 'unverified' | 'pending' | 'verified' | 'rejected';
+  registrationStatus?: 'pending' | 'completed';
+  emailStatus?: EmailDeliveryStatus;
   registrationSource?: 'Dashboard' | 'Binary Tree' | string;
   joinDate: string;
   created_at?: string; // Relational database alias
@@ -71,17 +139,18 @@ export interface NetworkMember {
   idGrade?: string; // Dynamic ID Grade (e.g. 200 PV, 100 PV, 0 PV)
   packageId: string;
   packageName: string;
-  sponsorId?: string; // Direct Referrer ID (sponsor_id)
+  sponsorId?: string; // Direct Referrer ID (referral_id / sponsor_id)
   sponsor_id?: string; // Alias for sponsor_id
+  referralId?: string; // Strict recruiter / sponsor reference
   sponsorName?: string;
-  parentId?: string; // Binary Placement Parent ID (binary_parent_id, NULL for Root)
+  parentId?: string; // Binary Placement Parent ID (placement_parent_id, NULL for Root)
   parent_id?: string; // Relational alias
   binaryParentId?: string; // Alias for binary_parent_id
   binary_parent_id?: string; // Alias for binary_parent_id
   placementId?: string;
   placement_id?: string; // Relational alias
   placementLeg: 'left' | 'right';
-  position?: 'left' | 'right' | 'Root' | string; // Binary Position: left / right
+  position?: 'left' | 'right' | 'LEFT' | 'RIGHT' | 'Root' | string; // Binary Position: LEFT / RIGHT
   leftChildId?: string; // Max 1 Left Child in Binary Tree
   rightChildId?: string; // Max 1 Right Child in Binary Tree
   pv: number; // Personal Volume
@@ -104,6 +173,23 @@ export interface NetworkMember {
   member_type?: string; // Relational alias
   mentorLeader?: string;
   placementLocked?: boolean; // Locked permanently once set
+  nodeStatus?: 'blank' | 'registered'; // 'blank' = empty Tree Slot, 'registered' = active member with AB- ID
+  leftBlankId?: string; // Tree Slot ID for empty LEFT leg (SLOT-...)
+  rightBlankId?: string; // Tree Slot ID for empty RIGHT leg (SLOT-...)
+  aponUniqueId?: string; // Role-based Unique ID
+  reservedAt?: string;
+  registeredAt?: string;
+}
+
+export interface BinaryTreePersistenceState {
+  nodes: NetworkMember[];
+  lastCompanySeq: number;
+  lastAbCustomerSeq: number; // Sequence strictly for committed Customer IDs starting at 1000000001
+  allocatedIds: Record<string, 'blank' | 'registered' | 'tombstoned'>;
+  idMigrationMappings?: IdMigrationMapping[];
+  migrationReport?: IdMigrationReport;
+  version: number;
+  updatedAt: string;
 }
 
 export interface CommissionConfig {

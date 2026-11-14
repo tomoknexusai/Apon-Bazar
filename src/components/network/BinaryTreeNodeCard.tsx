@@ -199,16 +199,20 @@ export const BinaryTreeNodeCard: React.FC<BinaryTreeNodeCardProps> = ({
 interface EmptySlotCardProps {
   parentMember: NetworkMember;
   leg: 'left' | 'right';
-  onRegister: (sponsorId: string, placementId: string, leg: 'left' | 'right') => void;
+  reservedBlankId?: string;
+  onRegister: (sponsorId: string, placementId: string, leg: 'left' | 'right', reservedBlankId?: string) => void;
 }
 
 export const EmptySlotCard: React.FC<EmptySlotCardProps> = ({
   parentMember,
   leg,
+  reservedBlankId,
   onRegister
 }) => {
   const isLeft = leg === 'left';
   const effectiveId = parentMember.customerId || parentMember.permanentMemberId || parentMember.id;
+  const effectiveBlankId =
+    reservedBlankId || (isLeft ? parentMember.leftBlankId : parentMember.rightBlankId);
 
   return (
     <div
@@ -226,24 +230,31 @@ export const EmptySlotCard: React.FC<EmptySlotCardProps> = ({
               : 'bg-teal-100 dark:bg-teal-950 text-teal-700 dark:text-teal-300'
           }`}
         >
-          {isLeft ? 'LEFT LEG (বাম শাখা)' : 'RIGHT LEG (ডান শাখা)'}
+          {isLeft ? 'LEFT BLANK (বাম শাখা)' : 'RIGHT BLANK (ডান শাখা)'}
         </span>
-        <span className="text-[10px] font-bold text-neutral-400">খালি স্লট</span>
+        <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400">
+          {effectiveBlankId ? 'Reserved ID' : 'খালি স্লট'}
+        </span>
       </div>
 
       <div className="py-1">
+        {effectiveBlankId && (
+          <div className="text-sm font-mono font-black text-indigo-700 dark:text-indigo-300 mb-0.5">
+            [{effectiveBlankId}]
+          </div>
+        )}
         <p className="text-xs font-bold text-neutral-700 dark:text-neutral-300">
-          {isLeft ? 'খালি বাম স্লট (Empty Left Slot)' : 'খালি ডান স্লট (Empty Right Slot)'}
+          {isLeft ? 'সংরক্ষিত বাম পজিশন (Left Blank)' : 'সংরক্ষিত ডান পজিশন (Right Blank)'}
         </p>
         <p className="text-[10px] text-neutral-500 dark:text-neutral-400 mt-0.5">
-          প্যারেন্ট: <span className="font-mono font-bold text-emerald-600">{effectiveId}</span>
+          Parent: <span className="font-mono font-bold text-emerald-600">{effectiveId}</span>
         </p>
       </div>
 
       <div className="grid grid-cols-2 gap-2 pt-1">
         <button
           type="button"
-          onClick={() => onRegister(effectiveId, effectiveId, leg)}
+          onClick={() => onRegister(effectiveId, effectiveId, leg, effectiveBlankId)}
           className="px-2 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[10px] font-bold flex items-center justify-center gap-1 shadow-xs transition-transform hover:scale-102 cursor-pointer"
         >
           <UserPlus className="w-3 h-3" />
@@ -251,10 +262,10 @@ export const EmptySlotCard: React.FC<EmptySlotCardProps> = ({
         </button>
         <button
           type="button"
-          onClick={() => onRegister(effectiveId, effectiveId, leg)}
+          onClick={() => onRegister(effectiveId, effectiveId, leg, effectiveBlankId)}
           className="px-2 py-2 bg-neutral-100 hover:bg-neutral-200 dark:bg-neutral-800 text-neutral-800 dark:text-neutral-200 rounded-xl text-[10px] font-bold flex items-center justify-center gap-1 transition-transform hover:scale-102 cursor-pointer border border-neutral-300 dark:border-neutral-700"
         >
-          <span>স্লট রিজার্ভ</span>
+          <span>Click to Register</span>
         </button>
       </div>
     </div>

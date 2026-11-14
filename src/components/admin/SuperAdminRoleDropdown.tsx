@@ -13,7 +13,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { UserRole } from '../../types';
-import { isImmutableSuperAdmin, validateBackendRoleAccess } from '../../lib/rbac';
+import { isImmutableSuperAdmin, validateBackendRoleAccess, getDashboardPathForRole } from '../../lib/rbac';
 import {
   Crown,
   Shield,
@@ -188,10 +188,26 @@ export const SuperAdminRoleDropdown: React.FC<{ className?: string }> = ({ class
     }
 
     // Pure administrative navigation view switch
-    setActiveRole(targetRole);
+    const switched = setActiveRole(targetRole);
+    if (switched && typeof window !== 'undefined') {
+      const targetPath = getDashboardPathForRole(targetRole);
+      window.history.pushState({}, '', targetPath);
+    }
   };
 
-  const currentOption = roleOptions.find((opt) => opt.role === activeRole) || roleOptions[0];
+  const roleAliasMap: Partial<Record<UserRole, UserRole>> = {
+    account_officer: 'finance',
+    finance_officer: 'finance',
+    district_admin: 'admin',
+    operations_officer: 'operations_partner',
+    rider: 'delivery_rider',
+    delivery_man: 'delivery_rider',
+    vendor_dealer_shop: 'dealer',
+    vendor: 'dealer',
+    customer_networker: currentUser?.isNetworkActive ? 'network_member' : 'customer'
+  };
+  const resolvedDropdownRole = roleAliasMap[activeRole] || activeRole;
+  const currentOption = roleOptions.find((opt) => opt.role === activeRole || opt.role === resolvedDropdownRole) || roleOptions[0];
   const CurrentIcon = currentOption.icon;
 
   return (

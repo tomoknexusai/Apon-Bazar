@@ -156,7 +156,9 @@ interface AuthContextType {
     businessType?: string;
     tradeLicenseNumber?: string;
     registrationSource?: string;
+    preserveCurrentSession?: boolean;
   }) => UserProfile;
+  linkBinaryCompanyId: (userId: string, binaryCompanyId: string) => void;
   logout: () => Promise<{ success: boolean; message: string }>;
   updateProfile: (data: Partial<UserProfile>) => void;
   updateServiceAddress: (address: Partial<ServiceAddress>) => void;
@@ -809,6 +811,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     businessType?: string;
     tradeLicenseNumber?: string;
     registrationSource?: string;
+    preserveCurrentSession?: boolean;
   }): UserProfile => {
     // 1. Mandatory Name Validation
     const trimmedName = (userData.fullName || '').trim();
@@ -1049,25 +1052,48 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return nextUsers;
     });
 
-    setCurrentUserId(newUser.id);
-    setIsLoggedIn(true);
-    setActiveRoleState(newUser.primaryRole);
+    if (!userData.preserveCurrentSession) {
+      setCurrentUserId(newUser.id);
+      setIsLoggedIn(true);
+      setActiveRoleState(newUser.primaryRole);
 
-    try {
-      localStorage.setItem(STORAGE_CURRENT_USER_ID_KEY, newUser.id);
-      localStorage.setItem(STORAGE_IS_LOGGED_IN_KEY, 'true');
-      localStorage.setItem(STORAGE_ACTIVE_ROLE_KEY, newUser.primaryRole);
-    } catch (e) {
-      console.error('Failed to save auth keys during registration', e);
+      try {
+        localStorage.setItem(STORAGE_CURRENT_USER_ID_KEY, newUser.id);
+        localStorage.setItem(STORAGE_IS_LOGGED_IN_KEY, 'true');
+        localStorage.setItem(STORAGE_ACTIVE_ROLE_KEY, newUser.primaryRole);
+      } catch (e) {
+        console.error('Failed to save auth keys during registration', e);
+      }
     }
 
     addAuditLog(
       'REGISTER_USER',
       'AuthContext',
-      `New registration: ${newUser.fullName} as ${newUser.primaryRole} (ID: ${permanentMemberId})`
+      `New registration: ${newUser.fullName} as ${newUser.primaryRole} (ID: ${permanentMemberId})${userData.preserveCurrentSession ? ' [Admin/Tree Session Preserved]' : ''}`
     );
 
     return newUser;
+  };
+
+  const linkBinaryCompanyId = (userId: string, binaryCompanyId: string) => {
+    setUsers((prev) => {
+      const updated = prev.map((u) =>
+        u.id === userId
+          ? {
+              ...u,
+              binaryCompanyId,
+              isNetworkActive: true,
+              updatedAt: new Date().toISOString()
+            }
+          : u
+      );
+      try {
+        localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify(updated));
+      } catch (e) {
+        console.error('Failed to persist linked binaryCompanyId', e);
+      }
+      return updated;
+    });
   };
 
   const updateProfile = (data: Partial<UserProfile>) => {
@@ -1495,11 +1521,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const rollbackUserRegistration = (userId: string): void => {
-    const target = users.find((u) => u.id === userId);
-    if (target?.aponUniqueId || target?.permanentMemberId) {
-      UniqueIdService.recordAccountDeletion(target.aponUniqueId || target.permanentMemberId || '', userId);
-    }
-    setUsers((prev) => prev.filter((u) => u.id !== userId));
+    setUsers((prev) => {
+      const target = prev.find((u) => u.id === userId) || users.find((u) => u.id === userId);
+      if (target?.aponUniqueId || target?.permanentMemberId) {
+        UniqueIdService.recordAccountDeletion(target.aponUniqueId || target.permanentMemberId || '', userId);
+      }
+      const next = prev.filter((u) => u.id !== userId);
+      try {
+        localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify(next));
+      } catch (e) {
+        console.error('Failed to persist rollback to localStorage', e);
+      }
+      return next;
+    });
   };
 
   const changeSuperAdminPassword = async (
@@ -1890,6 +1924,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         rollbackUserRegistration,
         adjustUserWalletByAdmin,
         registerUser,
+        linkBinaryCompanyId,
         logout,
         updateProfile,
         updateServiceAddress,

@@ -366,8 +366,8 @@ const MainContent: React.FC = () => {
       );
 
       if (isSuperAdminUser) {
-        const isExplicitDealerUrl = cleanPath.startsWith('/dealer') || cleanPath.startsWith('/vendor');
-        if (!isExplicitDealerUrl && (activeRole === 'dealer' || activeRole === 'vendor')) {
+        const isExplicitDealerUrl = cleanPath.startsWith('/dealer') || cleanPath.startsWith('/vendor') || cleanPath.startsWith('/shop');
+        if (!isExplicitDealerUrl && (activeRole === 'dealer' || activeRole === 'vendor' || activeRole === 'vendor_dealer_shop')) {
           setActiveRole('super_admin');
           setUrlAttemptedRole(null);
           return;

@@ -24,7 +24,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useNetworkMarketing } from '../../context/NetworkMarketingContext';
 import { useNotifications } from '../../context/NotificationContext';
 import { useLanguage } from '../../context/LanguageContext';
-import { generateRoleUniqueId } from '../../lib/security';
+import { previewRoleUniqueId } from '../../lib/security';
 import {
   BD_DIVISIONS,
   getDistrictsList,
@@ -226,9 +226,9 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
   const [buyerVillage, setBuyerVillage] = useState<string>('সোবহানবাগ');
   const [buyerHousePara, setBuyerHousePara] = useState<string>('বাড়ি ২৭, সড়ক ০৪');
 
-  // Preview Customer ID (Auto-generated CUST-XXXXXX format, read-only)
+  // Preview Customer ID (Auto-generated AponCN-XXXXXX format, read-only, non-mutating)
   const previewCustomerId = useMemo(() => {
-    return generateRoleUniqueId('customer', allUsers);
+    return previewRoleUniqueId('customer_networker', allUsers);
   }, [allUsers]);
 
   // URL Query param auto-referral and auto-placement code detection

@@ -5,6 +5,7 @@
 
 import React from 'react';
 import { CustomerRegistrationModal } from '../auth/CustomerRegistrationModal';
+import { COMPANY_MASTER_ROOT_ID } from '../../types/networkMarketing';
 
 interface AddCustomerSlotModalProps {
   isOpen: boolean;
@@ -28,7 +29,7 @@ export const AddCustomerSlotModal: React.FC<AddCustomerSlotModalProps> = ({
       onClose={onClose}
       source="binary_tree"
       title="Customer Registration & Slot Reserved"
-      initialReferralId={sponsorId || 'TMK000001'}
+      initialReferralId={sponsorId || COMPANY_MASTER_ROOT_ID}
       initialPlacementId={parentMemberId}
       initialPlacementPosition={leg}
       lockPlacement={true}

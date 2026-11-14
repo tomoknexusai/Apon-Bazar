@@ -224,11 +224,13 @@ export interface ServiceAddress {
 
 export interface UserProfile {
   id: string;
-  aponUniqueId?: string; // Standard Role-Based Unique ID: AponCN-000001, AponVDS-000001, etc.
+  internalId?: string;
+  aponUniqueId?: string; // Standard Role-Based / Customer ID: AB-1000000001+, AponVDS-000001, etc.
+  legacyCustomerId?: string;
   businessType?: BusinessType; // For Vendor / Dealer / Shop (Vendor, Dealer, Shop)
   finalRole?: FinalRole;
   username?: string; // User-chosen login ID (unique, e.g. customer01)
-  customerId?: string; // Auto-generated Customer ID (e.g. CUST-100001)
+  customerId?: string; // Auto-generated Customer ID (e.g. AB-1000000002)
   email: string;
   fullName: string;
   name?: string;
@@ -237,6 +239,8 @@ export interface UserProfile {
   password?: string;
   profilePhotoUrl?: string;
   nationalId?: string;
+  registrationStatus?: 'pending' | 'completed';
+  emailStatus?: 'sent' | 'pending' | 'failed' | 'retry_queued';
   dateOfBirth?: string;
   gender?: Gender;
   latitude?: number;
@@ -248,6 +252,7 @@ export interface UserProfile {
   roles: UserRole[];
   primaryRole: UserRole;
   permanentMemberId?: string;
+  binaryCompanyId?: string;
   registrationSource?: 'Dashboard' | 'Binary Tree' | string;
   sponsorId?: string;
   referralId?: string;

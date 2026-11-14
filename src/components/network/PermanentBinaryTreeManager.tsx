@@ -15,7 +15,7 @@ import React, { useState, useMemo } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useNetworkMarketing } from '../../context/NetworkMarketingContext';
 import { formatPV } from '../../lib/ecommerce-data';
-import { NetworkMember } from '../../types/networkMarketing';
+import { COMPANY_MASTER_ROOT_ID, NetworkMember } from '../../types/networkMarketing';
 import {
   GitBranch,
   Users,
@@ -47,6 +47,7 @@ export const PermanentBinaryTreeManager: React.FC = () => {
   const {
     members,
     currentMember,
+    getBlankSlotForParent,
     reassignBinaryPlacementBySuperAdmin,
     commissionConfig,
     runDailyMatchingEngine
@@ -55,7 +56,7 @@ export const PermanentBinaryTreeManager: React.FC = () => {
   const isSuperAdmin = currentUser?.primaryRole === 'super_admin';
 
   const [activeView, setActiveView] = useState<'visual_binary' | 'sponsor_tree' | 'matrix_table' | 'audit_logs'>('visual_binary');
-  const [focusMemberId, setFocusMemberId] = useState<string>('TMK000001');
+  const [focusMemberId, setFocusMemberId] = useState<string>(COMPANY_MASTER_ROOT_ID);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedNodeDetails, setSelectedNodeDetails] = useState<NetworkMember | null>(null);
 
@@ -64,12 +65,13 @@ export const PermanentBinaryTreeManager: React.FC = () => {
     sponsorId: string;
     placementId: string;
     leg: 'left' | 'right';
+    reservedCompanyId?: string;
   } | null>(null);
 
   // Super Admin Placement Reassignment Modal State
   const [reassignModalOpen, setReassignModalOpen] = useState(false);
   const [targetMemberForReassign, setTargetMemberForReassign] = useState<NetworkMember | null>(null);
-  const [newParentId, setNewParentId] = useState<string>('TMK000001');
+  const [newParentId, setNewParentId] = useState<string>(COMPANY_MASTER_ROOT_ID);
   const [newPosition, setNewPosition] = useState<'left' | 'right'>('left');
   const [reassignReason, setReassignReason] = useState<string>('');
   const [reassignFeedback, setReassignFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
@@ -146,12 +148,12 @@ export const PermanentBinaryTreeManager: React.FC = () => {
       alert('অননুমোদিত: শুধুমাত্র সুপার এডমিন পারমানেন্ট বাইনারি প্লেসমেন্ট পরিবর্তন করতে পারেন।');
       return;
     }
-    if (member.id === 'TMK000001' || !member.parentId) {
+    if (member.id === COMPANY_MASTER_ROOT_ID || member.id === 'TMK000001' || !member.parentId) {
       alert('কোম্পানি রুট নোড (Root Node) স্থানান্তর করা সম্ভব নয়।');
       return;
     }
     setTargetMemberForReassign(member);
-    setNewParentId(member.parentId || 'TMK000001');
+    setNewParentId(member.parentId || COMPANY_MASTER_ROOT_ID);
     setNewPosition((member.position === 'right' || member.placementLeg === 'right') ? 'right' : 'left');
     setReassignReason('');
     setReassignFeedback(null);
@@ -388,12 +390,12 @@ export const PermanentBinaryTreeManager: React.FC = () => {
             <div className="flex items-center gap-1.5 text-xs font-bold flex-wrap">
               <button
                 type="button"
-                onClick={() => setFocusMemberId('TMK000001')}
+                onClick={() => setFocusMemberId(COMPANY_MASTER_ROOT_ID)}
                 className="px-2.5 py-1.5 bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 hover:bg-emerald-200 rounded-xl flex items-center gap-1 transition-colors"
                 title="রুট নোডে ফিরে যান"
               >
                 <Home className="w-3.5 h-3.5" />
-                <span>কোম্পানি রুট (TMK000001)</span>
+                <span>কোম্পানি রুট ({COMPANY_MASTER_ROOT_ID})</span>
               </button>
 
               {breadcrumbPath.map((node, idx) => {
@@ -426,7 +428,7 @@ export const PermanentBinaryTreeManager: React.FC = () => {
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="মেম্বার আইডি (e.g. TMK000002) বা নাম..."
+                  placeholder={`মেম্বার আইডি (e.g. ${COMPANY_MASTER_ROOT_ID}) বা নাম...`}
                   className="pl-9 pr-3 py-1.5 bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-xl text-xs w-60 font-mono text-neutral-900 dark:text-white"
                 />
               </div>
@@ -499,8 +501,8 @@ export const PermanentBinaryTreeManager: React.FC = () => {
                 member={activeFocusMember}
                 allMembers={members}
                 allUsers={allUsers}
-                isRoot={activeFocusMember.id === 'TMK000001'}
-                legLabel={activeFocusMember.id === 'TMK000001' ? 'COMPANY ROOT (LEVEL 0)' : `FOCUS NODE (${activeFocusMember.id})`}
+                isRoot={activeFocusMember.id === COMPANY_MASTER_ROOT_ID}
+                legLabel={activeFocusMember.id === COMPANY_MASTER_ROOT_ID ? 'COMPANY ROOT (LEVEL 0)' : `FOCUS NODE (${activeFocusMember.id})`}
                 isSuperAdmin={isSuperAdmin}
                 onFocus={setFocusMemberId}
                 onDetails={setSelectedNodeDetails}
@@ -532,8 +534,9 @@ export const PermanentBinaryTreeManager: React.FC = () => {
                   <EmptySlotCard
                     parentMember={activeFocusMember}
                     leg="left"
-                    onRegister={(sponsorId, placementId, leg) =>
-                      setRegisterSlotModal({ sponsorId, placementId, leg })
+                    reservedBlankId={activeFocusMember.leftBlankId || getBlankSlotForParent(activeFocusMember.id, 'left')?.id}
+                    onRegister={(sponsorId, placementId, leg, reservedCompanyId) =>
+                      setRegisterSlotModal({ sponsorId, placementId, leg, reservedCompanyId })
                     }
                   />
                 )}
@@ -556,8 +559,9 @@ export const PermanentBinaryTreeManager: React.FC = () => {
                   <EmptySlotCard
                     parentMember={activeFocusMember}
                     leg="right"
-                    onRegister={(sponsorId, placementId, leg) =>
-                      setRegisterSlotModal({ sponsorId, placementId, leg })
+                    reservedBlankId={activeFocusMember.rightBlankId || getBlankSlotForParent(activeFocusMember.id, 'right')?.id}
+                    onRegister={(sponsorId, placementId, leg, reservedCompanyId) =>
+                      setRegisterSlotModal({ sponsorId, placementId, leg, reservedCompanyId })
                     }
                   />
                 )}
@@ -584,22 +588,29 @@ export const PermanentBinaryTreeManager: React.FC = () => {
                       onDetails={setSelectedNodeDetails}
                     />
                   ) : level1Left ? (
-                    <div className="p-3 bg-neutral-50 dark:bg-neutral-800/60 border border-dashed border-emerald-300 dark:border-emerald-800 rounded-xl text-center space-y-1">
-                      <span className="text-[9px] font-bold text-emerald-600 block">Left ➔ Left</span>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setRegisterSlotModal({
-                            sponsorId: level1Left.customerId || level1Left.id,
-                            placementId: level1Left.customerId || level1Left.id,
-                            leg: 'left'
-                          })
-                        }
-                        className="text-[10px] text-emerald-600 hover:text-emerald-700 font-bold hover:underline block mx-auto py-0.5 cursor-pointer"
-                      >
-                        + খালি স্লটে যুক্ত করুন
-                      </button>
-                    </div>
+                    (() => {
+                      const blankLL = level1Left.leftBlankId || getBlankSlotForParent(level1Left.id, 'left')?.id;
+                      return (
+                        <div className="p-3 bg-neutral-50 dark:bg-neutral-800/60 border border-dashed border-emerald-300 dark:border-emerald-800 rounded-xl text-center space-y-1">
+                          <span className="text-[9px] font-bold text-emerald-600 block">Left ➔ Left (LEFT BLANK)</span>
+                          {blankLL && <span className="font-mono font-black text-[11px] text-indigo-600 block">[{blankLL}]</span>}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setRegisterSlotModal({
+                                sponsorId: level1Left.customerId || level1Left.id,
+                                placementId: level1Left.id,
+                                leg: 'left',
+                                reservedCompanyId: blankLL
+                              })
+                            }
+                            className="text-[10px] text-emerald-600 hover:text-emerald-700 font-bold hover:underline block mx-auto py-0.5 cursor-pointer"
+                          >
+                            + Click to Register
+                          </button>
+                        </div>
+                      );
+                    })()
                   ) : (
                     <div className="p-3 bg-neutral-50 dark:bg-neutral-800/40 border border-neutral-200 dark:border-neutral-800 rounded-xl text-center">
                       <span className="text-[9px] font-bold text-neutral-400 block">Left ➔ Left</span>
@@ -621,22 +632,29 @@ export const PermanentBinaryTreeManager: React.FC = () => {
                       onDetails={setSelectedNodeDetails}
                     />
                   ) : level1Left ? (
-                    <div className="p-3 bg-neutral-50 dark:bg-neutral-800/60 border border-dashed border-emerald-300 dark:border-emerald-800 rounded-xl text-center space-y-1">
-                      <span className="text-[9px] font-bold text-emerald-600 block">Left ➔ Right</span>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setRegisterSlotModal({
-                            sponsorId: level1Left.customerId || level1Left.id,
-                            placementId: level1Left.customerId || level1Left.id,
-                            leg: 'right'
-                          })
-                        }
-                        className="text-[10px] text-emerald-600 hover:text-emerald-700 font-bold hover:underline block mx-auto py-0.5 cursor-pointer"
-                      >
-                        + খালি স্লটে যুক্ত করুন
-                      </button>
-                    </div>
+                    (() => {
+                      const blankLR = level1Left.rightBlankId || getBlankSlotForParent(level1Left.id, 'right')?.id;
+                      return (
+                        <div className="p-3 bg-neutral-50 dark:bg-neutral-800/60 border border-dashed border-emerald-300 dark:border-emerald-800 rounded-xl text-center space-y-1">
+                          <span className="text-[9px] font-bold text-emerald-600 block">Left ➔ Right (RIGHT BLANK)</span>
+                          {blankLR && <span className="font-mono font-black text-[11px] text-indigo-600 block">[{blankLR}]</span>}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setRegisterSlotModal({
+                                sponsorId: level1Left.customerId || level1Left.id,
+                                placementId: level1Left.id,
+                                leg: 'right',
+                                reservedCompanyId: blankLR
+                              })
+                            }
+                            className="text-[10px] text-emerald-600 hover:text-emerald-700 font-bold hover:underline block mx-auto py-0.5 cursor-pointer"
+                          >
+                            + Click to Register
+                          </button>
+                        </div>
+                      );
+                    })()
                   ) : (
                     <div className="p-3 bg-neutral-50 dark:bg-neutral-800/40 border border-neutral-200 dark:border-neutral-800 rounded-xl text-center">
                       <span className="text-[9px] font-bold text-neutral-400 block">Left ➔ Right</span>
@@ -658,22 +676,29 @@ export const PermanentBinaryTreeManager: React.FC = () => {
                       onDetails={setSelectedNodeDetails}
                     />
                   ) : level1Right ? (
-                    <div className="p-3 bg-neutral-50 dark:bg-neutral-800/60 border border-dashed border-teal-300 dark:border-teal-800 rounded-xl text-center space-y-1">
-                      <span className="text-[9px] font-bold text-teal-600 block">Right ➔ Left</span>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setRegisterSlotModal({
-                            sponsorId: level1Right.customerId || level1Right.id,
-                            placementId: level1Right.customerId || level1Right.id,
-                            leg: 'left'
-                          })
-                        }
-                        className="text-[10px] text-teal-600 hover:text-teal-700 font-bold hover:underline block mx-auto py-0.5 cursor-pointer"
-                      >
-                        + খালি স্লটে যুক্ত করুন
-                      </button>
-                    </div>
+                    (() => {
+                      const blankRL = level1Right.leftBlankId || getBlankSlotForParent(level1Right.id, 'left')?.id;
+                      return (
+                        <div className="p-3 bg-neutral-50 dark:bg-neutral-800/60 border border-dashed border-teal-300 dark:border-teal-800 rounded-xl text-center space-y-1">
+                          <span className="text-[9px] font-bold text-teal-600 block">Right ➔ Left (LEFT BLANK)</span>
+                          {blankRL && <span className="font-mono font-black text-[11px] text-indigo-600 block">[{blankRL}]</span>}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setRegisterSlotModal({
+                                sponsorId: level1Right.customerId || level1Right.id,
+                                placementId: level1Right.id,
+                                leg: 'left',
+                                reservedCompanyId: blankRL
+                              })
+                            }
+                            className="text-[10px] text-teal-600 hover:text-teal-700 font-bold hover:underline block mx-auto py-0.5 cursor-pointer"
+                          >
+                            + Click to Register
+                          </button>
+                        </div>
+                      );
+                    })()
                   ) : (
                     <div className="p-3 bg-neutral-50 dark:bg-neutral-800/40 border border-neutral-200 dark:border-neutral-800 rounded-xl text-center">
                       <span className="text-[9px] font-bold text-neutral-400 block">Right ➔ Left</span>
@@ -695,22 +720,29 @@ export const PermanentBinaryTreeManager: React.FC = () => {
                       onDetails={setSelectedNodeDetails}
                     />
                   ) : level1Right ? (
-                    <div className="p-3 bg-neutral-50 dark:bg-neutral-800/60 border border-dashed border-teal-300 dark:border-teal-800 rounded-xl text-center space-y-1">
-                      <span className="text-[9px] font-bold text-teal-600 block">Right ➔ Right</span>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setRegisterSlotModal({
-                            sponsorId: level1Right.customerId || level1Right.id,
-                            placementId: level1Right.customerId || level1Right.id,
-                            leg: 'right'
-                          })
-                        }
-                        className="text-[10px] text-teal-600 hover:text-teal-700 font-bold hover:underline block mx-auto py-0.5 cursor-pointer"
-                      >
-                        + খালি স্লটে যুক্ত করুন
-                      </button>
-                    </div>
+                    (() => {
+                      const blankRR = level1Right.rightBlankId || getBlankSlotForParent(level1Right.id, 'right')?.id;
+                      return (
+                        <div className="p-3 bg-neutral-50 dark:bg-neutral-800/60 border border-dashed border-teal-300 dark:border-teal-800 rounded-xl text-center space-y-1">
+                          <span className="text-[9px] font-bold text-teal-600 block">Right ➔ Right (RIGHT BLANK)</span>
+                          {blankRR && <span className="font-mono font-black text-[11px] text-indigo-600 block">[{blankRR}]</span>}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setRegisterSlotModal({
+                                sponsorId: level1Right.customerId || level1Right.id,
+                                placementId: level1Right.id,
+                                leg: 'right',
+                                reservedCompanyId: blankRR
+                              })
+                            }
+                            className="text-[10px] text-teal-600 hover:text-teal-700 font-bold hover:underline block mx-auto py-0.5 cursor-pointer"
+                          >
+                            + Click to Register
+                          </button>
+                        </div>
+                      );
+                    })()
                   ) : (
                     <div className="p-3 bg-neutral-50 dark:bg-neutral-800/40 border border-neutral-200 dark:border-neutral-800 rounded-xl text-center">
                       <span className="text-[9px] font-bold text-neutral-400 block">Right ➔ Right</span>
@@ -905,7 +937,7 @@ export const PermanentBinaryTreeManager: React.FC = () => {
           <div className="space-y-3">
             {members.map((m) => {
               const directs = members.filter((child) => child.sponsorId === m.id);
-              if (directs.length === 0 && m.id !== 'TMK000001') return null;
+              if (directs.length === 0 && m.id !== COMPANY_MASTER_ROOT_ID) return null;
 
               return (
                 <div key={m.id} className="p-4 bg-neutral-50 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-700 rounded-2xl space-y-3">
@@ -1269,6 +1301,7 @@ export const PermanentBinaryTreeManager: React.FC = () => {
           onSwitchToLogin={() => setRegisterSlotModal(null)}
           source="binary_tree"
           title="Customer Registration & Slot Reserved"
+          reservedCompanyId={registerSlotModal.reservedCompanyId}
           initialReferralId={registerSlotModal.sponsorId}
           initialPlacementId={registerSlotModal.placementId}
           initialPlacementPosition={registerSlotModal.leg}

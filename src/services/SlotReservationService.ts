@@ -4,13 +4,14 @@
  * Project: Apon Bazar / Apon Bazar
  */
 
-import { NetworkMember, ReservedSlot } from '../types/networkMarketing';
+import { COMPANY_MASTER_ROOT_ID, NetworkMember, ReservedSlot } from '../types/networkMarketing';
 
 export interface SlotAvailabilityResult {
   isAvailable: boolean;
   reason?: string;
   occupiedBy?: string;
   isReserved?: boolean;
+  reservedCompanyId?: string;
 }
 
 export interface AIPlacementRecommendation {
@@ -19,6 +20,7 @@ export interface AIPlacementRecommendation {
   placementId: string;
   placementName: string;
   position: 'left' | 'right';
+  reservedCompanyId?: string;
   statusText: string;
   isAvailable: boolean;
   reasonText: string;
@@ -40,8 +42,9 @@ export class SlotReservationService {
       return { isAvailable: false, reason: 'Placement ID is required' };
     }
 
+    const registeredMembers = members.filter((m) => m.nodeStatus !== 'blank');
     const cleanParentId = parentId.trim().toUpperCase();
-    const parentNode = members.find(
+    const parentNode = registeredMembers.find(
       (m) =>
         m.id.toUpperCase() === cleanParentId ||
         (m.customerId && m.customerId.toUpperCase() === cleanParentId) ||
@@ -52,10 +55,10 @@ export class SlotReservationService {
       return { isAvailable: false, reason: `Placement ID "${parentId}" not found in network tree` };
     }
 
-    // 1. Check permanent child
+    // 1. Check permanent registered child
     const childId = leg === 'left' ? parentNode.leftChildId : parentNode.rightChildId;
     if (childId) {
-      const childNode = members.find((m) => m.id === childId || m.customerId === childId);
+      const childNode = registeredMembers.find((m) => m.id === childId || m.customerId === childId);
       const childName = childNode ? `${childNode.fullName} (${childNode.id})` : childId;
       return {
         isAvailable: false,
@@ -83,7 +86,17 @@ export class SlotReservationService {
       };
     }
 
-    return { isAvailable: true };
+    // 3. Resolve pre-reserved blank position Company ID if present on parent or all nodes
+    const blankNode = members.find(
+      (m) =>
+        m.nodeStatus === 'blank' &&
+        m.parentId?.toUpperCase() === parentNode.id.toUpperCase() &&
+        (m.placementLeg || '').toLowerCase() === leg
+    );
+    const reservedCompanyId =
+      (leg === 'left' ? parentNode.leftBlankId : parentNode.rightBlankId) || blankNode?.id;
+
+    return { isAvailable: true, reservedCompanyId };
   }
 
   /**
@@ -96,11 +109,13 @@ export class SlotReservationService {
     reservedPlacements: ReservedSlot[] = [],
     preferredLeg?: 'left' | 'right'
   ): AIPlacementRecommendation {
+    const registeredMembers = members.filter((m) => m.nodeStatus !== 'blank');
+
     // 1. Resolve sponsor
-    const masterMember: NetworkMember = members[0] || ({
-      id: 'TMK000001',
+    const masterMember: NetworkMember = registeredMembers.find((m) => m.id === COMPANY_MASTER_ROOT_ID) || registeredMembers[0] || ({
+      id: COMPANY_MASTER_ROOT_ID,
       userId: 'admin-master',
-      customerId: 'TMK000001',
+      customerId: COMPANY_MASTER_ROOT_ID,
       fullName: 'Company Master Account',
       mobile: '01700000000',
       email: 'master@aponbazar.com',
@@ -119,7 +134,7 @@ export class SlotReservationService {
     let sponsor: NetworkMember = masterMember;
     if (sponsorId) {
       const cleanSponsor = sponsorId.trim().toUpperCase();
-      const found = members.find(
+      const found = registeredMembers.find(
         (m) =>
           m.id.toUpperCase() === cleanSponsor ||
           (m.customerId && m.customerId.toUpperCase() === cleanSponsor) ||
@@ -142,6 +157,7 @@ export class SlotReservationService {
 
     let chosenParent: NetworkMember = sponsor;
     let chosenPosition: 'left' | 'right' = targetLeg;
+    let chosenReservedCompanyId: string | undefined;
     let foundSlot = false;
 
     while (queue.length > 0) {
@@ -157,6 +173,7 @@ export class SlotReservationService {
       if (firstCheck.isAvailable) {
         chosenParent = current;
         chosenPosition = firstLeg;
+        chosenReservedCompanyId = firstCheck.reservedCompanyId;
         foundSlot = true;
         break;
       }
@@ -165,17 +182,18 @@ export class SlotReservationService {
       if (secondCheck.isAvailable) {
         chosenParent = current;
         chosenPosition = secondLeg;
+        chosenReservedCompanyId = secondCheck.reservedCompanyId;
         foundSlot = true;
         break;
       }
 
       // Add children to queue
       if (current.leftChildId) {
-        const leftNode = members.find((m) => m.id === current.leftChildId);
+        const leftNode = registeredMembers.find((m) => m.id === current.leftChildId);
         if (leftNode) queue.push(leftNode);
       }
       if (current.rightChildId) {
-        const rightNode = members.find((m) => m.id === current.rightChildId);
+        const rightNode = registeredMembers.find((m) => m.id === current.rightChildId);
         if (rightNode) queue.push(rightNode);
       }
     }
@@ -192,9 +210,10 @@ export class SlotReservationService {
       placementId: chosenParent.id,
       placementName: chosenParent.fullName,
       position: chosenPosition,
+      reservedCompanyId: chosenReservedCompanyId,
       statusText: 'Available',
       isAvailable: true,
-      reasonText: `AI Smart Placement has selected the optimal ${chosenPosition === 'left' ? 'Left' : 'Right'} slot under ${chosenParent.fullName} (${chosenParent.id}) based on network balance.`
+      reasonText: `AI Smart Placement has selected the optimal ${chosenPosition === 'left' ? 'Left' : 'Right'} slot under ${chosenParent.fullName} (${chosenParent.id})${chosenReservedCompanyId ? ` [Reserved ID: ${chosenReservedCompanyId}]` : ''} based on network balance.`
     };
   }
 }

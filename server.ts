@@ -7,6 +7,7 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { GoogleGenAI } from '@google/genai';
+import { defaultBinaryTreeStore } from './src/server/binaryTreeStore';
 
 // Lazy Gemini API Client (User-Agent header telemetry compliant)
 let geminiAiClient: GoogleGenAI | null = null;
@@ -1732,6 +1733,239 @@ Instructions:
       success: true,
       data: serverSuperAdminNotifications,
       unreadCount: serverSuperAdminNotifications.filter((n) => !n.isRead).length
+    });
+  });
+
+  /**
+   * =========================================================================
+   * BINARY TREE, AB- REGISTRATION, MIGRATION & EMAIL DELIVERY API
+   * =========================================================================
+   */
+  const verifyAdminOrSuperAdmin = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const requestorRole = (req.headers['x-user-role'] || req.query.requestorRole || '').toString().toLowerCase();
+    const requestorId = (req.headers['x-user-id'] || req.query.requestorId || '').toString();
+    const isAllowed =
+      requestorRole === 'super_admin' ||
+      requestorRole === 'admin' ||
+      requestorRole === 'founder' ||
+      requestorId === FIXED_SUPER_ADMIN_ID ||
+      requestorId === 'APON-SADMIN-001' ||
+      requestorId === 'AponSA-000001' ||
+      requestorId === 'usr-admin-02';
+
+    if (!isAllowed) {
+      return res.status(403).json({
+        success: false,
+        statusCode: 403,
+        error: 'Forbidden Access',
+        message: '403 Forbidden: Administrative privileges required to view migration mappings or email logs.'
+      });
+    }
+    next();
+  };
+
+  app.get('/api/network/tree', async (_req, res) => {
+    try {
+      const payload = await defaultBinaryTreeStore.getState();
+      res.json({
+        success: true,
+        treeState: payload.treeState,
+        matchingHistory: payload.matchingHistory,
+        registeredMembers: payload.registeredMembers,
+        blankPositions: payload.blankPositions
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err?.message || 'Failed to load binary tree' });
+    }
+  });
+
+  app.get('/api/network/tree/subtree/:companyId?', async (req, res) => {
+    try {
+      const companyId = String(req.params.companyId || req.query.companyId || '').trim();
+      const requestorRole = req.header('x-user-role') || '';
+      const requestorUserId = req.header('x-user-id') || '';
+      const requestorCompanyId = req.header('x-company-id') || '';
+
+      const result = await defaultBinaryTreeStore.getIsolatedSubtree({
+        targetCompanyId: companyId,
+        requestorRole,
+        requestorUserId,
+        requestorCompanyId
+      });
+
+      return res.status(result.statusCode || (result.success ? 200 : 400)).json(result);
+    } catch (err: any) {
+      return res.status(500).json({
+        success: false,
+        statusCode: 500,
+        message: err?.message || 'Failed to query isolated binary subtree'
+      });
+    }
+  });
+
+  app.get('/api/network/placement/preview', async (req, res) => {
+    try {
+      const referralId = String(req.query.referralId || '').trim();
+      if (!referralId) {
+        return res.status(400).json({
+          found: false,
+          message: 'referralId query parameter is required.'
+        });
+      }
+      const preview = await defaultBinaryTreeStore.previewPlacementByReferral(referralId);
+      return res.status(preview.found ? 200 : 404).json({
+        found: preview.found,
+        message: preview.message,
+        referralId: preview.referralNode?.id,
+        referralName: preview.referralNode?.fullName,
+        placementId: preview.placementParentNode?.id,
+        placementName: preview.placementParentNode?.fullName,
+        position: preview.position,
+        leg: preview.leg,
+        blankSlotId: preview.blankSlotId
+      });
+    } catch (err: any) {
+      return res.status(500).json({
+        found: false,
+        message: err?.message || 'Failed to calculate placement preview'
+      });
+    }
+  });
+
+  app.post('/api/network/register-customer', async (req, res) => {
+    try {
+      const appOrigin =
+        process.env.APP_URL ||
+        `${req.protocol}://${req.get('host') || 'localhost:3000'}`;
+      const result = await defaultBinaryTreeStore.registerCustomerAtomically({
+        ...(req.body || {}),
+        appOrigin
+      });
+      return res.status(result.statusCode || (result.success ? 200 : 400)).json(result);
+    } catch (err: any) {
+      return res.status(500).json({
+        success: false,
+        statusCode: 500,
+        message: err?.message || 'Customer registration failed'
+      });
+    }
+  });
+
+  app.get('/api/network/migration-report', verifyAdminOrSuperAdmin, async (_req, res) => {
+    try {
+      const status = await defaultBinaryTreeStore.getMigrationAndEmailStatus();
+      return res.json({
+        success: true,
+        ...status
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err?.message || 'Failed to fetch migration report' });
+    }
+  });
+
+  app.post('/api/network/migration/rollback', verifySuperAdminOnly, async (_req, res) => {
+    try {
+      const result = await defaultBinaryTreeStore.rollbackMigrationFromBackup();
+      return res.status(result.statusCode).json(result);
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err?.message || 'Migration rollback failed' });
+    }
+  });
+
+  app.get('/api/network/email-logs', verifyAdminOrSuperAdmin, async (_req, res) => {
+    try {
+      const status = await defaultBinaryTreeStore.getMigrationAndEmailStatus();
+      return res.json({
+        success: true,
+        emailDeliveryLogs: status.emailDeliveryLogs
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err?.message || 'Failed to fetch email logs' });
+    }
+  });
+
+  app.post('/api/network/email-logs/retry', verifyAdminOrSuperAdmin, async (req, res) => {
+    try {
+      const appOrigin =
+        process.env.APP_URL ||
+        `${req.protocol}://${req.get('host') || 'localhost:3000'}`;
+      const result = await defaultBinaryTreeStore.retryPendingEmails(appOrigin);
+      return res.json({
+        success: true,
+        ...result
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err?.message || 'Failed to retry email queue' });
+    }
+  });
+
+  app.post('/api/network/blank-slot/register', async (req, res) => {
+    try {
+      const result = await defaultBinaryTreeStore.registerBlankSlot(req.body || {});
+      return res.status(result.statusCode || (result.success ? 200 : 400)).json(result);
+    } catch (err: any) {
+      return res.status(500).json({
+        success: false,
+        statusCode: 500,
+        message: err?.message || 'Atomic blank slot registration failed'
+      });
+    }
+  });
+
+  app.post('/api/network/matching/execute', async (req, res) => {
+    try {
+      const result = await defaultBinaryTreeStore.executeMemberMatching(req.body || {});
+      return res.status(result.statusCode || 200).json(result);
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err?.message || 'Matching execution failed' });
+    }
+  });
+
+  app.post('/api/network/matching/batch', async (req, res) => {
+    try {
+      const result = await defaultBinaryTreeStore.executeBatchMatching(req.body || {});
+      return res.status(result.statusCode || 200).json(result);
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err?.message || 'Batch matching failed' });
+    }
+  });
+
+  app.post('/api/network/carry-forward/adjust', async (req, res) => {
+    try {
+      const result = await defaultBinaryTreeStore.adjustCarryForward(req.body || {});
+      return res.status(result.statusCode || 200).json(result);
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err?.message || 'Carry forward adjustment failed' });
+    }
+  });
+
+  app.post('/api/network/placement/reassign', async (req, res) => {
+    try {
+      const result = await defaultBinaryTreeStore.reassignPlacement(req.body || {});
+      return res.status(result.statusCode || 200).json(result);
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err?.message || 'Placement reassignment failed' });
+    }
+  });
+
+  app.post('/api/network/tree/sync', async (req, res) => {
+    try {
+      const { nodes, matchingHistory } = req.body || {};
+      if (!Array.isArray(nodes)) {
+        return res.status(400).json({ success: false, message: 'nodes array is required' });
+      }
+      const data = await defaultBinaryTreeStore.syncSnapshotIfNewer(nodes, matchingHistory);
+      return res.json({ success: true, data });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err?.message || 'Tree sync failed' });
+    }
+  });
+
+  app.delete('/api/network/blank-slot/:id', (req, res) => {
+    return res.status(403).json({
+      success: false,
+      statusCode: 403,
+      message: `Reserved Blank Slot '${req.params.id}' কখনো বাতিল, ডিলিট বা অন্য কারো জন্য পুনঃব্যবহার করা যাবে না।`
     });
   });
 
