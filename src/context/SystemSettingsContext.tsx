@@ -1,7 +1,7 @@
 /**
  * System Settings Context
  * Pilot Mode State Management for 'Thakurgaon Sadar, Thakurgaon, Bangladesh'
- * Project: বাজার সদাই (Bazar Sadai)
+ * Project: APON BAZAR (আপন বাজার)
  */
 
 import React, { createContext, useContext, useState, useEffect } from 'react';

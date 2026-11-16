@@ -58,7 +58,9 @@ import { roleLabels } from '../../lib/i18n';
 import { getDashboardPathForRole, getRoleVisibleName, resolveUserHighestRole } from '../../lib/rbac';
 
 export const Header: React.FC = () => {
-  const { currentUser, activeRole, isLoggedIn, logout, setActiveRole } = useAuth();
+  const { currentUser, activeRole, isLoggedIn, logout, setActiveRole, systemSettings } = useAuth();
+  const companyEn = (systemSettings?.companyName || 'APON BAZAR').trim();
+  const companyBn = (systemSettings?.companyNameBn || 'আপন বাজার').trim();
   const { language, t } = useLanguage();
   const { isPilotMode, pilotArea } = useSystemSettings();
   const {
@@ -293,16 +295,23 @@ export const Header: React.FC = () => {
               <div
                 className="flex items-center gap-2 sm:gap-2.5 cursor-pointer select-none"
                 onClick={handleHomeClick}
-                title="Apon Bazar Home"
+                title={`${companyEn} Home`}
               >
-                <BrandLogo size="md" iconOnly={true} className="shrink-0" />
+                <BrandLogo
+                  size="md"
+                  iconOnly={true}
+                  logoSrc={systemSettings?.companyLogoUrl}
+                  brandTitle={companyEn}
+                  brandTitleBn={companyBn}
+                  className="shrink-0"
+                />
                 <div>
                   <h1 className="text-sm sm:text-lg font-black text-neutral-900 dark:text-white tracking-tight flex items-center gap-1.5 flex-wrap">
                     <span className="text-emerald-700 dark:text-emerald-400 font-extrabold tracking-tight">
-                      Apon <span className="text-orange-500">Bazar</span>
+                      {companyEn}
                     </span>
                     <span className="text-[11px] sm:text-xs font-bold text-neutral-600 dark:text-neutral-300 hidden sm:inline">
-                      ({t('companyName')})
+                      ({companyBn || t('companyName')})
                     </span>
                     {isPilotMode ? (
                       <span className="text-[9px] sm:text-[10px] font-extrabold px-1.5 sm:px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200 border border-amber-300 dark:border-amber-700 flex items-center gap-1 shadow-2xs">

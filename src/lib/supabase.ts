@@ -16,9 +16,11 @@ export const isSupabaseConfigured = () => {
   return !!(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY);
 };
 
-// Initial Global System Settings
+// Initial Global System Settings (ONLY APON BAZAR brand defaults; optional contact fields start empty until configured by Super Admin)
 export const initialSystemSettings: SystemSettings = {
-  companyName: 'Apon Bazar',
+  siteName: 'APON BAZAR',
+  companyName: 'APON BAZAR',
+  companyNameBn: 'আপন বাজার',
   tokenName: 'APON_POINTS',
   currencyCode: 'BDT',
   currencySymbol: '৳',
@@ -27,9 +29,17 @@ export const initialSystemSettings: SystemSettings = {
   enableEmailNotifications: true,
   enableSmsNotifications: true,
   enablePushNotifications: true,
-  sellerContactEmail: 'dealer@aponbazar.com',
-  dealerContactEmail: 'dealer@aponbazar.com',
-  supportEmail: 'support@aponbazar.com',
+  supportEmail: '',
+  customerServiceEmail: '',
+  sellerContactEmail: '',
+  dealerContactEmail: '',
+  officialPhone: '',
+  companyAddress: '',
+  websiteUrl: '',
+  companyLogoUrl: '/apon-bazar-logo.png',
+  invoiceDisplayInfo: '',
+  emailSenderName: 'APON BAZAR',
+  emailSenderEmail: '',
   companyMasterId: 'AB-1000000001',
   updatedAt: new Date().toISOString()
 };

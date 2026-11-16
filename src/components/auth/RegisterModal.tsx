@@ -102,8 +102,9 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
     return (
       systemSettings?.sellerContactEmail ||
       systemSettings?.dealerContactEmail ||
-      'dealer@aponbazar.com'
-    );
+      systemSettings?.supportEmail ||
+      ''
+    ).trim();
   }, [systemSettings]);
   const {
     members,
@@ -971,17 +972,23 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
                     </button>
 
                     <div className="mt-2.5 text-center" onClick={(e) => e.stopPropagation()}>
-                      <a
-                        id="role-seller-quick-email-btn"
-                        href={`mailto:${sellerContactEmail}?subject=${encodeURIComponent(
-                          isBn ? 'সেলার / ডিলার রেজিস্ট্রেশন সম্পর্কিত যোগাযোগ - Apon Bazar' : 'Seller / Dealer Registration Inquiry - Apon Bazar'
-                        )}`}
-                        className="inline-flex items-center gap-1.5 text-xs text-[#198754] hover:text-[#157347] dark:text-emerald-400 font-bold hover:underline"
-                        title={`Email: ${sellerContactEmail}`}
-                      >
-                        <Mail className="w-3.5 h-3.5 text-[#198754] dark:text-emerald-400" />
-                        <span>{isBn ? '📧 Email Us (আমাদের ইমেইল করুন)' : '📧 Email Us'}</span>
-                      </a>
+                      {sellerContactEmail ? (
+                        <a
+                          id="role-seller-quick-email-btn"
+                          href={`mailto:${sellerContactEmail}?subject=${encodeURIComponent(
+                            isBn ? 'সেলার / ডিলার রেজিস্ট্রেশন সম্পর্কিত যোগাযোগ - APON BAZAR' : 'Seller / Dealer Registration Inquiry - APON BAZAR'
+                          )}`}
+                          className="inline-flex items-center gap-1.5 text-xs text-[#198754] hover:text-[#157347] dark:text-emerald-400 font-bold hover:underline"
+                          title={`Email: ${sellerContactEmail}`}
+                        >
+                          <Mail className="w-3.5 h-3.5 text-[#198754] dark:text-emerald-400" />
+                          <span>{isBn ? '📧 Email Us (আমাদের ইমেইল করুন)' : '📧 Email Us'}</span>
+                        </a>
+                      ) : (
+                        <span className="text-[11px] text-neutral-500">
+                          {isBn ? 'অনলাইন ফর্ম পূরণ করে নিবন্ধন করুন' : 'Complete the online form to apply'}
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -1840,26 +1847,28 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
                     </p>
 
                     {/* Attractive CTA Email Us Button Below Text */}
-                    <div className="mt-3 flex flex-wrap items-center gap-2.5">
-                      <a
-                        id="seller-dealer-email-us-btn"
-                        href={`mailto:${sellerContactEmail}?subject=${encodeURIComponent(
-                          isBn ? 'সেলার / ডিলার রেজিস্ট্রেশন সংক্রান্ত জিজ্ঞাসা - Apon Bazar' : 'Seller / Dealer Registration Inquiry - Apon Bazar'
-                        )}&body=${encodeURIComponent(
-                          isBn
-                            ? `সম্মানিত Apon Bazar টিম,\n\nআমি Apon Bazar-তে সেলার / ডিলার হিসেবে যুক্ত হতে আগ্রহী।\n\nদোকান / প্রতিষ্ঠানের নাম:\nস্বত্বাধিকারীর নাম:\nমোবাইল নম্বর:\nঠিকানা (জেলা/উপজেলা):\nপণ্য ক্যাটাগরি:\n\nধন্যবাদ।`
-                            : `Dear Apon Bazar Team,\n\nI am interested in registering as a Seller / Dealer on Apon Bazar.\n\nShop/Business Name:\nOwner Name:\nMobile Number:\nLocation (District/Upazila):\nProduct Category:\n\nThank you.`
-                        )}`}
-                        className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[#198754] hover:bg-[#157347] active:bg-[#115c38] active:scale-[0.98] text-white text-xs font-bold shadow-md shadow-emerald-900/15 hover:shadow-lg hover:shadow-emerald-700/25 transition-all cursor-pointer whitespace-nowrap focus:outline-hidden focus:ring-2 focus:ring-[#198754] focus:ring-offset-2"
-                        title={`Email: ${sellerContactEmail}`}
-                      >
-                        <Mail className="w-4 h-4 text-white shrink-0" />
-                        <span>{isBn ? '📧 Email Us (আমাদের ইমেইল করুন)' : '📧 Email Us'}</span>
-                      </a>
-                      <span className="text-[11px] text-amber-900/70 dark:text-amber-300/70 font-mono font-medium">
-                        ({sellerContactEmail})
-                      </span>
-                    </div>
+                    {sellerContactEmail && (
+                      <div className="mt-3 flex flex-wrap items-center gap-2.5">
+                        <a
+                          id="seller-dealer-email-us-btn"
+                          href={`mailto:${sellerContactEmail}?subject=${encodeURIComponent(
+                            isBn ? 'সেলার / ডিলার রেজিস্ট্রেশন সংক্রান্ত জিজ্ঞাসা - APON BAZAR' : 'Seller / Dealer Registration Inquiry - APON BAZAR'
+                          )}&body=${encodeURIComponent(
+                            isBn
+                              ? `সম্মানিত APON BAZAR টিম,\n\nআমি APON BAZAR-তে সেলার / ডিলার হিসেবে যুক্ত হতে আগ্রহী।\n\nদোকান / প্রতিষ্ঠানের নাম:\nস্বত্বাধিকারীর নাম:\nমোবাইল নম্বর:\nঠিকানা (জেলা/উপজেলা):\nপণ্য ক্যাটাগরি:\n\nধন্যবাদ।`
+                              : `Dear APON BAZAR Team,\n\nI am interested in registering as a Seller / Dealer on APON BAZAR.\n\nShop/Business Name:\nOwner Name:\nMobile Number:\nLocation (District/Upazila):\nProduct Category:\n\nThank you.`
+                          )}`}
+                          className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[#198754] hover:bg-[#157347] active:bg-[#115c38] active:scale-[0.98] text-white text-xs font-bold shadow-md shadow-emerald-900/15 hover:shadow-lg hover:shadow-emerald-700/25 transition-all cursor-pointer whitespace-nowrap focus:outline-hidden focus:ring-2 focus:ring-[#198754] focus:ring-offset-2"
+                          title={`Email: ${sellerContactEmail}`}
+                        >
+                          <Mail className="w-4 h-4 text-white shrink-0" />
+                          <span>{isBn ? '📧 Email Us (আমাদের ইমেইল করুন)' : '📧 Email Us'}</span>
+                        </a>
+                        <span className="text-[11px] text-amber-900/70 dark:text-amber-300/70 font-mono font-medium">
+                          ({sellerContactEmail})
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>

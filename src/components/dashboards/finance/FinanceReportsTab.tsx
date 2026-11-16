@@ -16,12 +16,14 @@ import {
   Clock,
   Layers
 } from 'lucide-react';
+import { useAuth } from '../../../context/AuthContext';
 
 interface FinanceReportsTabProps {
   language: 'bn' | 'en';
 }
 
 export const FinanceReportsTab: React.FC<FinanceReportsTabProps> = ({ language }) => {
+  const { systemSettings } = useAuth();
   const isBn = language === 'bn';
   const [selectedReport, setSelectedReport] = useState<string>('sales_revenue');
   const [dateRange, setDateRange] = useState('this_month');
@@ -172,7 +174,7 @@ export const FinanceReportsTab: React.FC<FinanceReportsTabProps> = ({ language }
           {/* Report Data Table Preview */}
           <div className="p-4 rounded-xl bg-slate-800/40 border border-slate-700/60 space-y-3">
             <div className="flex justify-between items-center text-xs text-slate-400">
-              <span>Organization: APON BAZAR DIGITAL LIMITED</span>
+              <span>Organization: {systemSettings?.companyName || 'APON BAZAR'}</span>
               <span>Audit Clearance: Level 1 Enterprise</span>
             </div>
 

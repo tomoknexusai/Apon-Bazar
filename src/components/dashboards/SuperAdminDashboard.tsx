@@ -1,11 +1,13 @@
 /**
  * Super Admin Dashboard Component
- * Project: ঘরের বাজার বিডি (Ghorer Bazar BD)
+ * Project: APON BAZAR (আপন বাজার)
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
+import { canAccessActiveUserList } from '../../lib/rbac';
+import { AccessDenied403 } from '../common/AccessDenied403';
 import { DashboardHeader } from '../common/DashboardHeader';
 import { AdminNetworkControlPanel } from '../network/AdminNetworkControlPanel';
 import { PermanentBinaryTreeManager } from '../network/PermanentBinaryTreeManager';
@@ -21,6 +23,9 @@ import { SuperAdminIDProfileManager } from '../admin/SuperAdminIDProfileManager'
 import { ProductPricingPaymentManagement } from '../admin/ProductPricingPaymentManagement';
 import { DeliveryChargeManagement } from '../admin/DeliveryChargeManagement';
 import { GlobalVatSettingsControl } from '../admin/GlobalVatSettingsControl';
+import { CompanyBrandingSettingsPanel } from '../admin/CompanyBrandingSettingsPanel';
+import { RiderAccountManager } from '../admin/RiderAccountManager';
+import { DealerAccountManager } from '../admin/DealerAccountManager';
 import { DailyTrendsWidget } from '../common/DailyTrendsWidget';
 import {
   ShieldCheck,
@@ -49,7 +54,9 @@ import {
   Save,
   RotateCcw,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  Building2,
+  Store
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { SUPER_ADMIN_RLS_POLICIES_SQL } from '../../lib/security';
@@ -66,7 +73,7 @@ export const SuperAdminDashboard: React.FC = () => {
     currentUser
   } = useAuth();
   const { language, t } = useLanguage();
-  const [activeTab, setActiveTab] = useState<'master_control' | 'product_pricing' | 'discount_management' | 'delivery_management' | 'vat_tax' | 'users_management' | 'orders_routing' | 'role_applications' | 'sms_ai_hub' | 'binary_tree' | 'overview' | 'network_control' | 'address_db'>('master_control');
+  const [activeTab, setActiveTab] = useState<'master_control' | 'company_settings' | 'rider_accounts' | 'dealer_accounts' | 'product_pricing' | 'discount_management' | 'delivery_management' | 'vat_tax' | 'users_management' | 'orders_routing' | 'role_applications' | 'sms_ai_hub' | 'binary_tree' | 'overview' | 'network_control' | 'address_db'>('master_control');
   const [settingsSubTab, setSettingsSubTab] = useState<'general' | 'vat_tax'>('general');
 
   const [companyName, setCompanyName] = useState(systemSettings.companyName);
@@ -74,14 +81,33 @@ export const SuperAdminDashboard: React.FC = () => {
   const [currencyCode, setCurrencyCode] = useState(systemSettings.currencyCode);
   const [currencySymbol, setCurrencySymbol] = useState(systemSettings.currencySymbol);
   const [timezone, setTimezone] = useState(systemSettings.timezone);
-  const [companyMasterId, setCompanyMasterId] = useState(systemSettings.companyMasterId || 'GBD000001');
+  const [companyMasterId, setCompanyMasterId] = useState(systemSettings.companyMasterId || 'AB-1000000001');
   const [sellerContactEmail, setSellerContactEmail] = useState(
-    systemSettings.sellerContactEmail || systemSettings.dealerContactEmail || 'dealer@aponbazar.com'
+    systemSettings.sellerContactEmail || systemSettings.dealerContactEmail || ''
   );
   const [savedSettings, setSavedSettings] = useState(false);
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [copiedSql, setCopiedSql] = useState(false);
+
+  useEffect(() => {
+    setCompanyName(systemSettings.companyName);
+    setTokenName(systemSettings.tokenName);
+    setCurrencyCode(systemSettings.currencyCode);
+    setCurrencySymbol(systemSettings.currencySymbol);
+    setTimezone(systemSettings.timezone);
+    setCompanyMasterId(systemSettings.companyMasterId || 'AB-1000000001');
+    setSellerContactEmail(systemSettings.sellerContactEmail || systemSettings.dealerContactEmail || '');
+  }, [
+    systemSettings.companyName,
+    systemSettings.tokenName,
+    systemSettings.currencyCode,
+    systemSettings.currencySymbol,
+    systemSettings.timezone,
+    systemSettings.companyMasterId,
+    systemSettings.sellerContactEmail,
+    systemSettings.dealerContactEmail
+  ]);
 
   // Super Admin Password Management Form State
   const [currentPass, setCurrentPass] = useState('');
@@ -91,6 +117,10 @@ export const SuperAdminDashboard: React.FC = () => {
   const [passSuccess, setPassSuccess] = useState('');
   const [passError, setPassError] = useState('');
 
+  if (!canAccessActiveUserList(currentUser)) {
+    return <AccessDenied403 attemptedRole="super_admin" />;
+  }
+
   const totalTomok = allUsers.reduce((acc, u) => acc + u.tomokTokenBalance, 0);
 
   const handleCancelSettings = () => {
@@ -99,8 +129,8 @@ export const SuperAdminDashboard: React.FC = () => {
     setCurrencyCode(systemSettings.currencyCode);
     setCurrencySymbol(systemSettings.currencySymbol);
     setTimezone(systemSettings.timezone);
-    setCompanyMasterId(systemSettings.companyMasterId || 'GBD000001');
-    setSellerContactEmail(systemSettings.sellerContactEmail || systemSettings.dealerContactEmail || 'dealer@aponbazar.com');
+    setCompanyMasterId(systemSettings.companyMasterId || 'AB-1000000001');
+    setSellerContactEmail(systemSettings.sellerContactEmail || systemSettings.dealerContactEmail || '');
     setSettingsError(null);
   };
 
@@ -125,19 +155,20 @@ export const SuperAdminDashboard: React.FC = () => {
 
     setIsSavingSettings(true);
     try {
-      // Simulate micro async tick for safe state synchronization
-      await new Promise((resolve) => setTimeout(resolve, 300));
-
-      updateSystemSettings({
+      const res = await updateSystemSettings({
         companyName: companyName.trim(),
         tokenName: tokenName.trim(),
         currencyCode: currencyCode.trim() || 'BDT',
         currencySymbol: currencySymbol.trim() || '৳',
         timezone: timezone.trim() || 'Asia/Dhaka',
-        companyMasterId: companyMasterId.trim() || 'GBD000001',
+        companyMasterId: companyMasterId.trim() || 'AB-1000000001',
         sellerContactEmail: sellerContactEmail.trim(),
         dealerContactEmail: sellerContactEmail.trim()
       });
+      if (!res.success) {
+        setSettingsError(res.message);
+        return;
+      }
       setSavedSettings(true);
       setTimeout(() => setSavedSettings(false), 4000);
     } catch (err: any) {
@@ -209,6 +240,48 @@ export const SuperAdminDashboard: React.FC = () => {
         >
           <Grid className="w-4 h-4" />
           <span>মাস্টার কন্ট্রোল সেন্টার (Master Control Center)</span>
+        </button>
+
+        <button
+          type="button"
+          id="btn-tab-superadmin-company-settings"
+          onClick={() => setActiveTab('company_settings')}
+          className={`px-4 py-2 rounded-xl transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+            activeTab === 'company_settings'
+              ? 'bg-[#198754] text-white shadow-xs font-bold ring-2 ring-emerald-400'
+              : 'bg-white text-neutral-700 hover:bg-emerald-50 hover:text-[#157347] border border-[#C8E6C9]'
+          }`}
+        >
+          <Building2 className="w-4 h-4" />
+          <span>কোম্পানি ও ব্র্যান্ডিং সেটিংস (Company & Branding)</span>
+        </button>
+
+        <button
+          type="button"
+          id="btn-tab-superadmin-rider-accounts"
+          onClick={() => setActiveTab('rider_accounts')}
+          className={`px-4 py-2 rounded-xl transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+            activeTab === 'rider_accounts'
+              ? 'bg-[#198754] text-white shadow-xs font-bold ring-2 ring-emerald-400'
+              : 'bg-white text-neutral-700 hover:bg-emerald-50 hover:text-[#157347] border border-[#C8E6C9]'
+          }`}
+        >
+          <Truck className="w-4 h-4" />
+          <span>রাইডার অ্যাকাউন্ট (Delivery Riders)</span>
+        </button>
+
+        <button
+          type="button"
+          id="btn-tab-superadmin-dealer-accounts"
+          onClick={() => setActiveTab('dealer_accounts')}
+          className={`px-4 py-2 rounded-xl transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+            activeTab === 'dealer_accounts'
+              ? 'bg-[#198754] text-white shadow-xs font-bold ring-2 ring-emerald-400'
+              : 'bg-white text-neutral-700 hover:bg-emerald-50 hover:text-[#157347] border border-[#C8E6C9]'
+          }`}
+        >
+          <Store className="w-4 h-4" />
+          <span>ডিলার অ্যাকাউন্ট (Dealers)</span>
         </button>
 
         <button
@@ -390,6 +463,12 @@ export const SuperAdminDashboard: React.FC = () => {
               <DailyTrendsWidget />
               <SuperAdminControlCenter />
             </div>
+          ) : activeTab === 'company_settings' ? (
+            <CompanyBrandingSettingsPanel />
+          ) : activeTab === 'rider_accounts' ? (
+            <RiderAccountManager />
+          ) : activeTab === 'dealer_accounts' ? (
+            <DealerAccountManager />
           ) : activeTab === 'product_pricing' ? (
             <ProductPricingPaymentManagement />
           ) : activeTab === 'discount_management' ? (
@@ -699,7 +778,7 @@ export const SuperAdminDashboard: React.FC = () => {
                         type="email"
                         value={sellerContactEmail}
                         onChange={(e) => setSellerContactEmail(e.target.value)}
-                        placeholder="dealer@aponbazar.com"
+                        placeholder="সুপার এডমিন কর্তৃক কনফিগারকৃত ইমেইল"
                         className="w-full bg-[#F4FBF5] border border-[#C8E6C9] focus:bg-white focus:border-[#198754] rounded-lg p-2.5 text-neutral-900 font-mono"
                       />
                       <p className="text-[11px] text-neutral-500">

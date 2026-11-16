@@ -16,6 +16,9 @@ export interface BrandLogoProps {
   className?: string;
   onClick?: () => void;
   alt?: string;
+  logoSrc?: string;
+  brandTitle?: string;
+  brandTitleBn?: string;
 }
 
 const sizeMap = {
@@ -33,10 +36,16 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
   iconOnly = false,
   className = '',
   onClick,
-  alt = 'Apon Bazar - আপন বাজার'
+  alt = 'APON BAZAR - আপন বাজার',
+  logoSrc,
+  brandTitle,
+  brandTitleBn
 }) => {
   const [imgError, setImgError] = useState(false);
   const dimensions = sizeMap[size] || sizeMap.md;
+  const resolvedLogoSrc = (logoSrc || '').trim() || '/apon-bazar-logo.png';
+  const resolvedTitle = (brandTitle || '').trim() || 'APON BAZAR';
+  const resolvedTitleBn = (brandTitleBn || '').trim() || 'আপন বাজার';
 
   // Render official full image if text & logo are combined
   if (!iconOnly && showTagline) {
@@ -44,10 +53,10 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
       <div
         onClick={onClick}
         className={`flex flex-col items-center select-none ${onClick ? 'cursor-pointer' : ''} ${className}`}
-        title="Apon Bazar - আপনার প্রয়োজন, আমাদের প্রতিশ্রুতি"
+        title={`${resolvedTitle} (${resolvedTitleBn})`}
       >
         <img
-          src="/apon-bazar-logo.png"
+          src={resolvedLogoSrc}
           alt={alt}
           referrerPolicy="no-referrer"
           className={`${dimensions.fullImgSize} w-auto object-contain rounded-lg`}
@@ -61,13 +70,13 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
     <div
       onClick={onClick}
       className={`inline-flex items-center gap-2 select-none ${onClick ? 'cursor-pointer hover:opacity-95 transition-opacity' : ''} ${className}`}
-      title="Apon Bazar (আপন বাজার)"
+      title={`${resolvedTitle} (${resolvedTitleBn})`}
     >
       {/* Visual Icon / Cart + Leaf Symbol */}
       <div className={`relative shrink-0 flex items-center justify-center ${dimensions.imgSize}`}>
         {!imgError ? (
           <img
-            src="/apon-bazar-logo.png"
+            src={resolvedLogoSrc}
             alt={alt}
             referrerPolicy="no-referrer"
             className="w-full h-full object-contain drop-shadow-2xs"

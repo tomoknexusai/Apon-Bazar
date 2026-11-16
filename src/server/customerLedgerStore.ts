@@ -1006,6 +1006,39 @@ export function createCustomerLedgerStore(customStorePath?: string) {
           transaction: tx
         };
       });
+    },
+
+    hasCredentialConflict: (params: { username?: string; email?: string; excludeId?: string }) => {
+      const payload = loadFromDisk();
+      if (params.username) {
+        const uLower = params.username.trim().toLowerCase();
+        if (
+          payload.customerAccounts.some(
+            (a) =>
+              a.userId !== params.excludeId &&
+              a.customerId !== params.excludeId &&
+              (a.username.trim().toLowerCase() === uLower ||
+                a.customerId.trim().toLowerCase() === uLower)
+          )
+        ) {
+          return 'username' as const;
+        }
+      }
+      if (params.email) {
+        const eLower = params.email.trim().toLowerCase();
+        if (
+          payload.customerAccounts.some(
+            (a) =>
+              a.userId !== params.excludeId &&
+              a.customerId !== params.excludeId &&
+              a.email &&
+              a.email.trim().toLowerCase() === eLower
+          )
+        ) {
+          return 'email' as const;
+        }
+      }
+      return null;
     }
   };
 }

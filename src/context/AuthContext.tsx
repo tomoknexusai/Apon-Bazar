@@ -1,6 +1,6 @@
 /**
  * Authentication, RBAC & Enterprise Profile Context Engine
- * Project: ঘরের বাজার বিডি (Ghorer Bazar BD)
+ * Project: APON BAZAR (আপন বাজার)
  */
 
 import React, { createContext, useContext, useState } from 'react';
@@ -12,6 +12,7 @@ import {
   KycVerification,
   SystemSettings,
   AuditLog,
+  ManagedStaffAccount,
   KycStatus,
   FIXED_SUPER_ADMIN_ID,
   BusinessType,
@@ -175,7 +176,9 @@ interface AuthContextType {
   submitKyc: (nid: string, dob: string, frontUrl?: string, backUrl?: string) => void;
   approveKyc: (userId: string) => void;
   rejectKyc: (userId: string, reason: string) => void;
-  updateSystemSettings: (settings: Partial<SystemSettings>) => void;
+  updateSystemSettings: (settings: Partial<SystemSettings>) => Promise<{ success: boolean; message: string; settings?: SystemSettings }>;
+  refreshCompanySettings: () => Promise<SystemSettings | null>;
+  upsertStaffUserLocal: (account: ManagedStaffAccount) => void;
   addAuditLog: (action: string, resource: string, details: string) => void;
   updateUserByAdmin: (
     userId: string,
@@ -357,6 +360,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>(initialAuditLogs);
   const [impersonatedUserId, setImpersonatedUserId] = useState<string | null>(null);
 
+  const refreshCompanySettings = async (): Promise<SystemSettings | null> => {
+    try {
+      const res = await fetch('/api/company-settings');
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (data?.success && data?.settings) {
+        const merged: SystemSettings = {
+          ...initialSystemSettings,
+          ...data.settings
+        };
+        setSystemSettings(merged);
+        try {
+          localStorage.setItem('tomshopbd_system_settings', JSON.stringify(merged));
+        } catch {}
+        return merged;
+      }
+    } catch {
+      // non-fatal
+    }
+    return null;
+  };
+
+  React.useEffect(() => {
+    void refreshCompanySettings();
+  }, []);
+
   // Sync users to localStorage whenever updated
   React.useEffect(() => {
     try {
@@ -486,7 +515,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const cleanIdLower = cleanId.toLowerCase();
     const normPhone = normalizeBDMobileNumber(cleanId);
 
-    // 0. Server-authoritative authentication for First 7 Company Accounts (AB-1000000001..007)
+    // 0. Server-authoritative authentication for Company Accounts, Riders, Dealers & Customers
     try {
       const authRes = await fetch('/api/auth/login', {
         method: 'POST',
@@ -497,81 +526,113 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const authData = await authRes.json();
         if (authData?.matchedAccountRecord) {
           if (!authData.authenticated || !authData.account) {
-            addAuditLog('LOGIN_FAILED', 'Auth', `Server rejected login for company account: ${cleanId}`);
+            addAuditLog(
+              'LOGIN_FAILED',
+              'Auth',
+              `Server rejected login for '${cleanId}': ${authData?.message || 'Unauthorized'}`
+            );
             return false;
           }
           const srvAcc = authData.account;
           const srvSummary = authData.summary;
-          const mustChange = Boolean(authData.mustChangePassword);
-          const resolvedCompanyId = srvAcc.companyId || srvAcc.customerId;
+          const mustChange = Boolean(authData.mustChangePassword ?? srvAcc.mustChangePassword);
+          const resolvedUserId = srvAcc.userId || srvAcc.id;
+          const isStaffAccount =
+            srvAcc.roleGroup === 'rider' ||
+            srvAcc.roleGroup === 'dealer' ||
+            srvAcc.primaryRole === 'delivery_rider' ||
+            srvAcc.primaryRole === 'dealer';
+          const resolvedCompanyId = !isStaffAccount ? (srvAcc.companyId || srvAcc.customerId) : undefined;
+          const resolvedPermanentId =
+            srvAcc.permanentMemberId || resolvedCompanyId || srvAcc.username;
           const resolvedTokenBal =
             typeof srvSummary?.tokenSummary?.balance === 'number'
               ? srvSummary.tokenSummary.balance
               : Number(srvAcc.tomokTokenBalance) || 0;
           const resolvedNetworkActive =
-            srvSummary?.networkStatus
+            !isStaffAccount &&
+            (srvSummary?.networkStatus
               ? srvSummary.networkStatus === 'active'
-              : srvAcc.primaryRole !== 'customer';
+              : srvAcc.primaryRole !== 'customer');
 
           let matchedServerUser = users.find(
             (u) =>
-              u.id === srvAcc.userId ||
+              u.id === resolvedUserId ||
+              (srvAcc.username && u.username?.toLowerCase() === String(srvAcc.username).toLowerCase()) ||
+              (srvAcc.permanentMemberId &&
+                u.permanentMemberId?.toLowerCase() === String(srvAcc.permanentMemberId).toLowerCase()) ||
               (resolvedCompanyId &&
                 (u.username?.toUpperCase() === resolvedCompanyId.toUpperCase() ||
                   u.customerId?.toUpperCase() === resolvedCompanyId.toUpperCase() ||
                   u.binaryCompanyId?.toUpperCase() === resolvedCompanyId.toUpperCase()))
           );
 
+          const nowIso = new Date().toISOString();
+
           if (matchedServerUser) {
-            setUsers((prev) =>
-              prev.map((u) =>
-                u.id === matchedServerUser!.id
-                  ? {
-                      ...u,
-                      mustChangePassword: mustChange,
-                      customerId: resolvedCompanyId || u.customerId,
-                      permanentMemberId: resolvedCompanyId || u.permanentMemberId,
-                      binaryCompanyId: resolvedCompanyId,
-                      sponsorId: srvAcc.sponsorId || u.sponsorId,
-                      referralId: srvAcc.sponsorId || u.referralId,
-                      placementId: srvAcc.placementParentId || u.placementId,
-                      placementLeg:
-                        srvAcc.placementPosition === 'RIGHT'
-                          ? 'right'
-                          : srvAcc.placementPosition === 'LEFT'
-                          ? 'left'
-                          : u.placementLeg,
-                      placementLevel: srvAcc.placementLevel || u.placementLevel,
-                      registeredAt: srvAcc.registeredAt || u.registeredAt,
-                      tomokTokenBalance: resolvedTokenBal,
-                      isNetworkActive: resolvedNetworkActive,
-                      lastLogin: new Date().toISOString(),
-                      updatedAt: new Date().toISOString()
-                    }
-                  : u
-              )
-            );
-            matchedServerUser = {
+            const patchedUser: UserProfile = {
               ...matchedServerUser,
+              username: srvAcc.username || matchedServerUser.username,
+              email: srvAcc.email || matchedServerUser.email,
+              fullName: srvAcc.fullName || matchedServerUser.fullName,
+              mobileNumber: srvAcc.mobileNumber || matchedServerUser.mobileNumber,
+              accountStatus: srvAcc.accountStatus || matchedServerUser.accountStatus,
               mustChangePassword: mustChange,
+              lastPasswordResetAt: srvAcc.lastPasswordResetAt || matchedServerUser.lastPasswordResetAt,
               customerId: resolvedCompanyId || matchedServerUser.customerId,
-              permanentMemberId: resolvedCompanyId || matchedServerUser.permanentMemberId,
-              binaryCompanyId: resolvedCompanyId,
-              tomokTokenBalance: resolvedTokenBal,
-              isNetworkActive: resolvedNetworkActive
+              permanentMemberId: resolvedPermanentId || matchedServerUser.permanentMemberId,
+              binaryCompanyId: isStaffAccount ? matchedServerUser.binaryCompanyId : resolvedCompanyId,
+              sponsorId: srvAcc.sponsorId || matchedServerUser.sponsorId,
+              referralId: srvAcc.sponsorId || matchedServerUser.referralId,
+              placementId: srvAcc.placementParentId || matchedServerUser.placementId,
+              placementLeg:
+                srvAcc.placementPosition === 'RIGHT'
+                  ? 'right'
+                  : srvAcc.placementPosition === 'LEFT'
+                  ? 'left'
+                  : matchedServerUser.placementLeg,
+              placementLevel: srvAcc.placementLevel || matchedServerUser.placementLevel,
+              registeredAt: srvAcc.registeredAt || matchedServerUser.registeredAt,
+              tomokTokenBalance: isStaffAccount ? matchedServerUser.tomokTokenBalance : resolvedTokenBal,
+              isNetworkActive: isStaffAccount ? matchedServerUser.isNetworkActive : resolvedNetworkActive,
+              vehicleType: srvAcc.vehicleType ?? matchedServerUser.vehicleType,
+              vehicleRegNumber: srvAcc.vehicleRegNumber ?? matchedServerUser.vehicleRegNumber,
+              drivingLicenseNumber: srvAcc.drivingLicenseNumber ?? matchedServerUser.drivingLicenseNumber,
+              shopName: srvAcc.shopName ?? matchedServerUser.shopName,
+              businessType: srvAcc.businessType ?? matchedServerUser.businessType,
+              tradeLicenseBusinessName:
+                srvAcc.tradeLicenseBusinessName ?? matchedServerUser.tradeLicenseBusinessName,
+              tradeLicenseNumber: srvAcc.tradeLicenseNumber ?? matchedServerUser.tradeLicenseNumber,
+              dealerOwnerName: srvAcc.dealerOwnerName ?? matchedServerUser.dealerOwnerName,
+              mandatoryAddress: srvAcc.mandatoryAddress ?? matchedServerUser.mandatoryAddress,
+              lastLogin: srvAcc.lastLogin || nowIso,
+              updatedAt: nowIso
             };
+            setUsers((prev) =>
+              prev.map((u) => (u.id === matchedServerUser!.id ? patchedUser : u))
+            );
+            matchedServerUser = patchedUser;
           } else {
-            const fallbackSeed = initialSeedUsers.find((s) => s.id === srvAcc.userId);
+            const fallbackSeed = initialSeedUsers.find((s) => s.id === resolvedUserId);
             matchedServerUser = fallbackSeed
-              ? { ...fallbackSeed, mustChangePassword: mustChange }
+              ? {
+                  ...fallbackSeed,
+                  username: srvAcc.username || fallbackSeed.username,
+                  email: srvAcc.email || fallbackSeed.email,
+                  fullName: srvAcc.fullName || fallbackSeed.fullName,
+                  mobileNumber: srvAcc.mobileNumber || fallbackSeed.mobileNumber,
+                  accountStatus: srvAcc.accountStatus || fallbackSeed.accountStatus,
+                  mustChangePassword: mustChange,
+                  lastLogin: srvAcc.lastLogin || nowIso
+                }
               : ({
-                  id: srvAcc.userId,
-                  username: srvAcc.username || resolvedCompanyId,
+                  id: resolvedUserId,
+                  username: srvAcc.username || resolvedPermanentId,
                   email: srvAcc.email,
                   fullName: srvAcc.fullName,
                   mobileNumber: srvAcc.mobileNumber,
-                  aponUniqueId: resolvedCompanyId,
-                  permanentMemberId: resolvedCompanyId,
+                  aponUniqueId: srvAcc.aponUniqueId || resolvedPermanentId,
+                  permanentMemberId: resolvedPermanentId,
                   customerId: resolvedCompanyId,
                   binaryCompanyId: resolvedCompanyId,
                   sponsorId: srvAcc.sponsorId,
@@ -588,8 +649,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   primaryRole: srvAcc.primaryRole || 'customer',
                   isNetworkActive: resolvedNetworkActive,
                   mustChangePassword: mustChange,
-                  createdAt: srvAcc.registeredAt || srvAcc.createdAt || new Date().toISOString(),
-                  updatedAt: new Date().toISOString()
+                  vehicleType: srvAcc.vehicleType,
+                  vehicleRegNumber: srvAcc.vehicleRegNumber,
+                  drivingLicenseNumber: srvAcc.drivingLicenseNumber,
+                  shopName: srvAcc.shopName,
+                  businessType: srvAcc.businessType,
+                  tradeLicenseBusinessName: srvAcc.tradeLicenseBusinessName,
+                  tradeLicenseNumber: srvAcc.tradeLicenseNumber,
+                  dealerOwnerName: srvAcc.dealerOwnerName,
+                  mandatoryAddress: srvAcc.mandatoryAddress,
+                  lastLogin: srvAcc.lastLogin || nowIso,
+                  createdAt: srvAcc.registeredAt || srvAcc.createdAt || nowIso,
+                  updatedAt: nowIso
                 } as UserProfile);
             setUsers((prev) => [matchedServerUser!, ...prev]);
           }
@@ -607,7 +678,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             localStorage.setItem(STORAGE_IS_LOGGED_IN_KEY, 'true');
             localStorage.setItem(STORAGE_ACTIVE_ROLE_KEY, targetRole);
           } catch (e) {
-            console.error('Failed to persist company auth session', e);
+            console.error('Failed to persist auth session', e);
           }
           if (!mustChange && typeof window !== 'undefined') {
             const targetPath = getDashboardPathForRole(targetRole);
@@ -617,7 +688,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           addAuditLog(
             'LOGIN_CREDENTIALS',
             'Auth',
-            `Server-verified login for '${matchedServerUser.fullName}' (${srvAcc.companyId}) [mustChangePassword=${mustChange}]`
+            `Server-verified login for '${matchedServerUser.fullName}' (${resolvedPermanentId}) [mustChangePassword=${mustChange}]`
           );
           return true;
         }
@@ -678,6 +749,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     if (!matchedUser) {
       addAuditLog('LOGIN_FAILED', 'Auth', `Failed password verification for account: ${identifier}`);
+      return false;
+    }
+
+    if (matchedUser.accountStatus && matchedUser.accountStatus !== 'active') {
+      addAuditLog('LOGIN_FAILED_INACTIVE', 'Auth', `Blocked deactivated account login: ${identifier}`);
       return false;
     }
 
@@ -1377,19 +1453,104 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     addAuditLog('REJECT_KYC', 'KycVerification', `Rejected KYC for user ID ${userId}: ${reason}`);
   };
 
-  const updateSystemSettings = (newSettings: Partial<SystemSettings>) => {
-    setSystemSettings((prev) => {
+  const updateSystemSettings = async (
+    newSettings: Partial<SystemSettings>
+  ): Promise<{ success: boolean; message: string; settings?: SystemSettings }> => {
+    try {
+      const res = await fetch('/api/super-admin/company-settings', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-role': currentUser?.primaryRole || activeRole || '',
+          'x-user-id': currentUser?.id || '',
+          'x-user-name': currentUser?.fullName || ''
+        },
+        body: JSON.stringify(newSettings)
+      });
+      const data = await res.json();
+      if (!res.ok || !data?.success) {
+        return {
+          success: false,
+          message: data?.message || 'কোম্পানি সেটিংস সংরক্ষণ করা যায়নি।'
+        };
+      }
+
+      const persisted: SystemSettings = {
+        ...initialSystemSettings,
+        ...(data.settings || {})
+      };
+      setSystemSettings(persisted);
+      try {
+        localStorage.setItem('tomshopbd_system_settings', JSON.stringify(persisted));
+      } catch (e) {}
+      addAuditLog('UPDATE_SYSTEM_SETTINGS', 'SystemSettings', `Updated company & branding settings`);
+      return {
+        success: true,
+        message: data.message || 'কোম্পানি ও ব্র্যান্ডিং সেটিংস সফলভাবে সংরক্ষিত হয়েছে!',
+        settings: persisted
+      };
+    } catch (err: any) {
+      // Local fallback only if network error occurs
       const updated = {
-        ...prev,
+        ...systemSettings,
         ...newSettings,
         updatedAt: new Date().toISOString()
       };
+      setSystemSettings(updated);
       try {
         localStorage.setItem('tomshopbd_system_settings', JSON.stringify(updated));
       } catch (e) {}
-      return updated;
+      addAuditLog('UPDATE_SYSTEM_SETTINGS', 'SystemSettings', `Updated global platform settings (local cache)`);
+      return {
+        success: true,
+        message: err?.message || 'Settings updated locally.',
+        settings: updated
+      };
+    }
+  };
+
+  const upsertStaffUserLocal = (account: ManagedStaffAccount) => {
+    setUsers((prev) => {
+      const idx = prev.findIndex(
+        (u) => u.id === account.id || u.permanentMemberId === account.permanentMemberId
+      );
+      const mapped: UserProfile = {
+        ...(idx !== -1 ? prev[idx] : ({} as UserProfile)),
+        id: account.id,
+        username: account.username,
+        permanentMemberId: account.permanentMemberId,
+        aponUniqueId: account.aponUniqueId,
+        fullName: account.fullName,
+        email: account.email,
+        mobileNumber: account.mobileNumber,
+        primaryRole: account.primaryRole,
+        roles: account.roles,
+        accountStatus: account.accountStatus,
+        verificationStatus: (idx !== -1 ? prev[idx].verificationStatus : 'verified') || 'verified',
+        languagePreference: 'bn',
+        tomokTokenBalance: idx !== -1 ? prev[idx].tomokTokenBalance || 0 : 0,
+        mustChangePassword: account.mustChangePassword,
+        lastLogin: account.lastLogin,
+        lastPasswordResetAt: account.lastPasswordResetAt,
+        vehicleType: account.vehicleType,
+        vehicleRegNumber: account.vehicleRegNumber,
+        drivingLicenseNumber: account.drivingLicenseNumber,
+        shopName: account.shopName,
+        businessType: (account.businessType as BusinessType) || undefined,
+        tradeLicenseBusinessName: account.tradeLicenseBusinessName,
+        tradeLicenseNumber: account.tradeLicenseNumber,
+        dealerOwnerName: account.dealerOwnerName,
+        mandatoryAddress: account.mandatoryAddress || (idx !== -1 ? prev[idx].mandatoryAddress : undefined),
+        createdAt: account.createdAt,
+        updatedAt: account.updatedAt
+      };
+      if (idx === -1) {
+        return [mapped, ...prev];
+      }
+      const next = [...prev];
+      next[idx] = mapped;
+      return next;
     });
-    addAuditLog('UPDATE_SYSTEM_SETTINGS', 'SystemSettings', `Updated global platform settings`);
   };
 
   const updateUserByAdmin = (
@@ -1638,13 +1799,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: false, message: 'ইউজার রেকর্ড খুঁজে পাওয়া যায়নি!' };
     }
 
-    // Protect immutable Super Admin from any disabling, suspension or ban
+    // Protect immutable Super Admin and last active Super Admin from disabling
     if (
       isImmutableSuperAdmin(target) ||
       target.id === FIXED_SUPER_ADMIN_ID ||
-      target.primaryRole === 'super_admin'
+      target.primaryRole === 'super_admin' ||
+      (target.roles || []).includes('super_admin')
     ) {
-      if (newStatus !== 'active') {
+      const activeSuperAdmins = users.filter(
+        (u) =>
+          (u.primaryRole === 'super_admin' || (u.roles || []).includes('super_admin')) &&
+          u.accountStatus === 'active'
+      );
+      if (newStatus !== 'active' && activeSuperAdmins.length <= 1) {
+        return {
+          success: false,
+          message: `সিস্টেমের একমাত্র সক্রিয় সুপার এডমিন ('${FIXED_SUPER_ADMIN_ID}') অপরিবর্তনীয় ও সুরক্ষিত। এর অ্যাক্সেস ডিঅ্যাক্টিভেট বা সাসপেন্ড করা যাবে না!`
+        };
+      }
+      if (newStatus !== 'active' && (isImmutableSuperAdmin(target) || target.id === FIXED_SUPER_ADMIN_ID)) {
         return {
           success: false,
           message: `সুপার এডমিন আইডি '${FIXED_SUPER_ADMIN_ID}' অপরিবর্তনীয় ও সুরক্ষিত। এর সর্বোচ্চ অ্যাক্সেস ডিঅ্যাক্টিভেট বা সাসপেন্ড করা অসম্ভব!`
@@ -1826,20 +1999,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       };
     }
 
-    // If company account in AB-1000000001..007 range, verify & persist via server API first
+    // If company account in AB-1000000001..007 range OR managed Rider/Dealer account, verify & persist via server API
     const companyIdentifier =
       currentUser.binaryCompanyId || currentUser.username || currentUser.id;
     const isSeedCompanyAccount =
       /^AB-100000000[1-7]$/i.test(companyIdentifier) ||
       ['usr-company-root', 'usr-leader-001', 'usr-leader-002', 'usr-member-003', 'usr-member-004', 'usr-member-005', 'usr-member-006'].includes(currentUser.id);
+    const isStaffManagedAccount =
+      currentUser.primaryRole === 'delivery_rider' ||
+      currentUser.primaryRole === 'rider' ||
+      currentUser.primaryRole === 'delivery_man' ||
+      currentUser.primaryRole === 'dealer' ||
+      currentUser.primaryRole === 'vendor_dealer_shop' ||
+      currentUser.primaryRole === 'vendor' ||
+      (currentUser.roles || []).some((r) =>
+        ['delivery_rider', 'rider', 'delivery_man', 'dealer', 'vendor_dealer_shop', 'vendor'].includes(r)
+      );
 
-    if (isSeedCompanyAccount) {
+    if (isSeedCompanyAccount || isStaffManagedAccount) {
       try {
         const res = await fetch('/api/auth/change-password', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            identifierOrUserId: companyIdentifier,
+            identifierOrUserId: isStaffManagedAccount ? (currentUser.id || currentUser.username) : companyIdentifier,
             currentPassword: cleanCurrent,
             newPassword: cleanNew
           })
@@ -2250,6 +2433,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         approveKyc,
         rejectKyc,
         updateSystemSettings,
+        refreshCompanySettings,
+        upsertStaffUserLocal,
         addAuditLog,
         updateUserByAdmin,
         updateUserStatusByAdmin,

@@ -10,6 +10,8 @@ import { GoogleGenAI } from '@google/genai';
 import { defaultBinaryTreeStore } from './src/server/binaryTreeStore';
 import { defaultCompanyAccountsAuthStore } from './src/server/companyAccountsAuthStore';
 import { defaultCustomerLedgerStore, evaluateEarnedRank } from './src/server/customerLedgerStore';
+import { defaultCompanySettingsStore } from './src/server/companySettingsStore';
+import { createStaffAccountsAuthStore } from './src/server/staffAccountsAuthStore';
 import { computeSubtreeLegStats, findBinaryTreeNodeById } from './src/lib/binaryBlankPositionEngine';
 
 // Lazy Gemini API Client (User-Agent header telemetry compliant)
@@ -228,11 +230,77 @@ const INITIAL_USERS = [
   }
 ];
 
+const serverStaffAccountsAuthStore = createStaffAccountsAuthStore(undefined, {
+  hasLoginIdOrEmail: async ({ username, email, excludeId }) => {
+    const compConflict = defaultCompanyAccountsAuthStore.hasCredentialConflict({
+      username,
+      email,
+      excludeId
+    });
+    if (compConflict) {
+      return {
+        conflictField: compConflict,
+        conflictValue: compConflict === 'username' ? username : email
+      };
+    }
+
+    const custConflict = defaultCustomerLedgerStore.hasCredentialConflict({
+      username,
+      email,
+      excludeId
+    });
+    if (custConflict) {
+      return {
+        conflictField: custConflict,
+        conflictValue: custConflict === 'username' ? username : email
+      };
+    }
+
+    if (username) {
+      const uLower = username.trim().toLowerCase();
+      if (
+        INITIAL_USERS.some(
+          (u) =>
+            u.id !== excludeId &&
+            (u.id.toLowerCase() === uLower || (u.permanentMemberId || '').toLowerCase() === uLower)
+        )
+      ) {
+        return { conflictField: 'username', conflictValue: username };
+      }
+    }
+
+    if (email) {
+      const eLower = email.trim().toLowerCase();
+      if (
+        INITIAL_USERS.some(
+          (u) => u.id !== excludeId && u.email && u.email.trim().toLowerCase() === eLower
+        )
+      ) {
+        return { conflictField: 'email', conflictValue: email };
+      }
+    }
+
+    return {};
+  }
+});
+
+let cachedCompanyPhone = '';
+
+async function refreshCachedCompanyPhone() {
+  try {
+    const s = await defaultCompanySettingsStore.getSettings();
+    cachedCompanyPhone = (s.officialPhone || '').trim();
+  } catch {
+    // non-fatal
+  }
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json());
+  app.use(express.json({ limit: '5mb' }));
+  await refreshCachedCompanyPhone();
 
   // API Route: Health Check
   app.get('/api/health', (_req, res) => {
@@ -644,8 +712,14 @@ Instructions:
       return res.status(404).json({ success: false, message: 'User record not found.' });
     }
 
-    // Protect Super Admin Immutability
-    if (userId === FIXED_SUPER_ADMIN_ID || INITIAL_USERS[userIndex].id === FIXED_SUPER_ADMIN_ID) {
+    // Protect Super Admin Immutability & never disable the only active Super Admin
+    const targetUser = INITIAL_USERS[userIndex];
+    const isTargetSuperAdmin =
+      targetUser.id === FIXED_SUPER_ADMIN_ID ||
+      targetUser.primaryRole === 'super_admin' ||
+      targetUser.roles.includes('super_admin');
+
+    if (userId === FIXED_SUPER_ADMIN_ID || targetUser.id === FIXED_SUPER_ADMIN_ID) {
       if (req.body.primaryRole && req.body.primaryRole !== 'super_admin') {
         return res.status(403).json({
           success: false,
@@ -658,6 +732,24 @@ Instructions:
           success: false,
           error: 'Super Admin Immutability Violation',
           message: `Super Admin account cannot be deactivated, suspended or banned.`
+        });
+      }
+    }
+
+    if (isTargetSuperAdmin) {
+      const activeSuperAdmins = INITIAL_USERS.filter(
+        (u) =>
+          (u.primaryRole === 'super_admin' || u.roles.includes('super_admin')) &&
+          u.accountStatus === 'active'
+      );
+      const disabling =
+        (req.body.accountStatus && req.body.accountStatus !== 'active') ||
+        (req.body.primaryRole && req.body.primaryRole !== 'super_admin');
+      if (disabling && activeSuperAdmins.length <= 1) {
+        return res.status(403).json({
+          success: false,
+          error: 'Last Active Super Admin Protection',
+          message: 'সিস্টেমের একমাত্র সক্রিয় সুপার এডমিন অ্যাকাউন্টটি নিষ্ক্রিয় বা ডাউনগ্রেড করা যাবে না।'
         });
       }
     }
@@ -701,6 +793,23 @@ Instructions:
     const userIndex = INITIAL_USERS.findIndex((u) => u.id === userId || u.permanentMemberId === userId);
     if (userIndex === -1) {
       return res.status(404).json({ success: false, message: 'User not found.' });
+    }
+
+    const target = INITIAL_USERS[userIndex];
+    const isTargetSA = target.primaryRole === 'super_admin' || target.roles.includes('super_admin');
+    if (isTargetSA) {
+      const activeSuperAdmins = INITIAL_USERS.filter(
+        (u) =>
+          (u.primaryRole === 'super_admin' || u.roles.includes('super_admin')) &&
+          u.accountStatus === 'active'
+      );
+      if (activeSuperAdmins.length <= 1) {
+        return res.status(403).json({
+          success: false,
+          error: 'Last Active Super Admin Protection',
+          message: 'সিস্টেমের একমাত্র সক্রিয় সুপার এডমিন অ্যাকাউন্টটি মুছে ফেলা যাবে না।'
+        });
+      }
     }
 
     const deleted = INITIAL_USERS.splice(userIndex, 1)[0];
@@ -1352,18 +1461,36 @@ Instructions:
 
   // RBAC Middleware: Strict Super Admin Application Security Guard
   const verifySuperAdminOnly = (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    const requestorRole = (req.headers['x-user-role'] || req.query.requestorRole || req.body.requestorRole || '').toString().toLowerCase();
-    const requestorId = (req.headers['x-user-id'] || req.query.requestorId || req.body.requestorId || '').toString();
+    const requestorRole = (req.headers['x-user-role'] || req.query.requestorRole || req.body?.requestorRole || '').toString().toLowerCase().trim();
+    const requestorId = (req.headers['x-user-id'] || req.query.requestorId || req.body?.requestorId || '').toString().trim();
 
-    const isSuperAdmin = requestorRole === 'super_admin' || requestorRole === 'founder' || requestorId === FIXED_SUPER_ADMIN_ID;
-
-    if (!isSuperAdmin) {
-      console.warn(`[RBAC APPLICATION ACCESS BLOCKED] Unauthorized application endpoint access attempt. Role: '${requestorRole}', User ID: '${requestorId}'`);
+    // Verify any known requestorId does not belong to a non-super-admin account
+    const knownUser = requestorId
+      ? INITIAL_USERS.find((u) => u.id === requestorId || u.permanentMemberId === requestorId)
+      : undefined;
+    if (knownUser && knownUser.primaryRole !== 'super_admin' && !knownUser.roles.includes('super_admin')) {
+      console.warn(`[RBAC BLOCKED] Non-Super-Admin account attempted Super Admin action. Role: '${requestorRole}', ID: '${requestorId}'`);
       return res.status(403).json({
         success: false,
         errorCode: 403,
         error: 'Forbidden Access',
-        message: `403 Forbidden: Application information is sensitive administrative data. Access is restricted exclusively to Super Admin. (VIEW_ROLE_APPLICATIONS = SUPER_ADMIN_ONLY). User role '${requestorRole || 'guest'}' is denied access.`,
+        message: `403 Forbidden: Account '${requestorId}' is NOT authorized for Super Admin actions.`,
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const isSuperAdmin =
+      requestorRole === 'super_admin' ||
+      requestorRole === 'founder' ||
+      (requestorId === FIXED_SUPER_ADMIN_ID && (!requestorRole || requestorRole === 'super_admin' || requestorRole === 'founder'));
+
+    if (!isSuperAdmin) {
+      console.warn(`[RBAC APPLICATION ACCESS BLOCKED] Unauthorized Super Admin endpoint access attempt. Role: '${requestorRole}', User ID: '${requestorId}'`);
+      return res.status(403).json({
+        success: false,
+        errorCode: 403,
+        error: 'Forbidden Access',
+        message: `403 Forbidden: Access is restricted exclusively to Super Admin. User role '${requestorRole || 'guest'}' is denied access.`,
         timestamp: new Date().toISOString()
       });
     }
@@ -2442,6 +2569,232 @@ Instructions:
 
   /**
    * =========================================================================
+   * COMPANY & BRANDING SETTINGS + RIDER/DEALER CREDENTIAL MANAGEMENT (SUPER ADMIN)
+   * =========================================================================
+   */
+  app.get('/api/company-settings', async (_req, res) => {
+    try {
+      const settings = await defaultCompanySettingsStore.getSettings();
+      cachedCompanyPhone = (settings.officialPhone || '').trim();
+      return res.json({ success: true, settings });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err?.message || 'Failed to load company settings' });
+    }
+  });
+
+  app.put('/api/super-admin/company-settings', verifySuperAdminOnly, async (req, res) => {
+    try {
+      const actorId = (req.headers['x-user-id'] || FIXED_SUPER_ADMIN_ID).toString();
+      const actorName = (req.headers['x-user-name'] || 'Mirza Khatib Uddin').toString();
+      const result = await defaultCompanySettingsStore.updateSettings({
+        updates: req.body || {},
+        actorId,
+        actorName
+      });
+      if (!result.success || !result.settings) {
+        return res.status(result.statusCode || 400).json(result);
+      }
+
+      cachedCompanyPhone = (result.settings.officialPhone || '').trim();
+      if (result.changedFields && result.changedFields.length > 0) {
+        await serverStaffAccountsAuthStore.recordAuditEvent({
+          superAdminId: actorId,
+          superAdminName: actorName,
+          targetAccountId: 'company-settings',
+          targetUsername: result.settings.companyName,
+          targetRole: 'system_settings',
+          actionType: 'COMPANY_SETTINGS_UPDATED',
+          changedFields: result.changedFields,
+          details: `Updated company & branding settings fields: ${result.changedFields.join(', ')}`
+        });
+      }
+
+      return res.json(result);
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err?.message || 'Failed to save company settings' });
+    }
+  });
+
+  // Delivery Rider Account Management Routes
+  app.get('/api/super-admin/riders', verifySuperAdminOnly, async (req, res) => {
+    try {
+      const accounts = await serverStaffAccountsAuthStore.listAccounts({
+        roleGroup: 'rider',
+        search: req.query.search ? String(req.query.search) : '',
+        status: req.query.status ? String(req.query.status) : 'all'
+      });
+      return res.json({ success: true, accounts, total: accounts.length });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err?.message || 'Failed to list rider accounts' });
+    }
+  });
+
+  app.post('/api/super-admin/riders', verifySuperAdminOnly, async (req, res) => {
+    try {
+      const actorId = (req.headers['x-user-id'] || FIXED_SUPER_ADMIN_ID).toString();
+      const actorName = (req.headers['x-user-name'] || 'Mirza Khatib Uddin').toString();
+      const result = await serverStaffAccountsAuthStore.createAccount({
+        ...(req.body || {}),
+        roleGroup: 'rider',
+        actorId,
+        actorName
+      });
+      return res.status(result.statusCode).json(result);
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err?.message || 'Failed to create rider account' });
+    }
+  });
+
+  app.patch('/api/super-admin/riders/:id', verifySuperAdminOnly, async (req, res) => {
+    try {
+      const actorId = (req.headers['x-user-id'] || FIXED_SUPER_ADMIN_ID).toString();
+      const actorName = (req.headers['x-user-name'] || 'Mirza Khatib Uddin').toString();
+      const result = await serverStaffAccountsAuthStore.updateCredentials({
+        ...(req.body || {}),
+        roleGroup: 'rider',
+        accountId: req.params.id,
+        actorId,
+        actorName
+      });
+      return res.status(result.statusCode).json(result);
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err?.message || 'Failed to update rider credentials' });
+    }
+  });
+
+  app.post('/api/super-admin/riders/:id/reset-password', verifySuperAdminOnly, async (req, res) => {
+    try {
+      const actorId = (req.headers['x-user-id'] || FIXED_SUPER_ADMIN_ID).toString();
+      const actorName = (req.headers['x-user-name'] || 'Mirza Khatib Uddin').toString();
+      const result = await serverStaffAccountsAuthStore.resetPassword({
+        roleGroup: 'rider',
+        accountId: req.params.id,
+        newPassword: String(req.body?.newPassword || ''),
+        forceChangeOnNextLogin: req.body?.forceChangeOnNextLogin ?? true,
+        sendNotificationEmail: Boolean(req.body?.sendNotificationEmail),
+        actorId,
+        actorName
+      });
+      return res.status(result.statusCode).json(result);
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err?.message || 'Failed to reset rider password' });
+    }
+  });
+
+  app.patch('/api/super-admin/riders/:id/status', verifySuperAdminOnly, async (req, res) => {
+    try {
+      const actorId = (req.headers['x-user-id'] || FIXED_SUPER_ADMIN_ID).toString();
+      const actorName = (req.headers['x-user-name'] || 'Mirza Khatib Uddin').toString();
+      const result = await serverStaffAccountsAuthStore.toggleStatus({
+        roleGroup: 'rider',
+        accountId: req.params.id,
+        accountStatus: req.body?.accountStatus === 'active' ? 'active' : 'suspended',
+        reason: req.body?.reason ? String(req.body.reason) : undefined,
+        actorId,
+        actorName
+      });
+      return res.status(result.statusCode).json(result);
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err?.message || 'Failed to change rider account status' });
+    }
+  });
+
+  // Dealer Account Management Routes
+  app.get('/api/super-admin/dealers', verifySuperAdminOnly, async (req, res) => {
+    try {
+      const accounts = await serverStaffAccountsAuthStore.listAccounts({
+        roleGroup: 'dealer',
+        search: req.query.search ? String(req.query.search) : '',
+        status: req.query.status ? String(req.query.status) : 'all'
+      });
+      return res.json({ success: true, accounts, total: accounts.length });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err?.message || 'Failed to list dealer accounts' });
+    }
+  });
+
+  app.post('/api/super-admin/dealers', verifySuperAdminOnly, async (req, res) => {
+    try {
+      const actorId = (req.headers['x-user-id'] || FIXED_SUPER_ADMIN_ID).toString();
+      const actorName = (req.headers['x-user-name'] || 'Mirza Khatib Uddin').toString();
+      const result = await serverStaffAccountsAuthStore.createAccount({
+        ...(req.body || {}),
+        roleGroup: 'dealer',
+        actorId,
+        actorName
+      });
+      return res.status(result.statusCode).json(result);
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err?.message || 'Failed to create dealer account' });
+    }
+  });
+
+  app.patch('/api/super-admin/dealers/:id', verifySuperAdminOnly, async (req, res) => {
+    try {
+      const actorId = (req.headers['x-user-id'] || FIXED_SUPER_ADMIN_ID).toString();
+      const actorName = (req.headers['x-user-name'] || 'Mirza Khatib Uddin').toString();
+      const result = await serverStaffAccountsAuthStore.updateCredentials({
+        ...(req.body || {}),
+        roleGroup: 'dealer',
+        accountId: req.params.id,
+        actorId,
+        actorName
+      });
+      return res.status(result.statusCode).json(result);
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err?.message || 'Failed to update dealer credentials' });
+    }
+  });
+
+  app.post('/api/super-admin/dealers/:id/reset-password', verifySuperAdminOnly, async (req, res) => {
+    try {
+      const actorId = (req.headers['x-user-id'] || FIXED_SUPER_ADMIN_ID).toString();
+      const actorName = (req.headers['x-user-name'] || 'Mirza Khatib Uddin').toString();
+      const result = await serverStaffAccountsAuthStore.resetPassword({
+        roleGroup: 'dealer',
+        accountId: req.params.id,
+        newPassword: String(req.body?.newPassword || ''),
+        forceChangeOnNextLogin: req.body?.forceChangeOnNextLogin ?? true,
+        sendNotificationEmail: Boolean(req.body?.sendNotificationEmail),
+        actorId,
+        actorName
+      });
+      return res.status(result.statusCode).json(result);
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err?.message || 'Failed to reset dealer password' });
+    }
+  });
+
+  app.patch('/api/super-admin/dealers/:id/status', verifySuperAdminOnly, async (req, res) => {
+    try {
+      const actorId = (req.headers['x-user-id'] || FIXED_SUPER_ADMIN_ID).toString();
+      const actorName = (req.headers['x-user-name'] || 'Mirza Khatib Uddin').toString();
+      const result = await serverStaffAccountsAuthStore.toggleStatus({
+        roleGroup: 'dealer',
+        accountId: req.params.id,
+        accountStatus: req.body?.accountStatus === 'active' ? 'active' : 'suspended',
+        reason: req.body?.reason ? String(req.body.reason) : undefined,
+        actorId,
+        actorName
+      });
+      return res.status(result.statusCode).json(result);
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err?.message || 'Failed to change dealer account status' });
+    }
+  });
+
+  app.get('/api/super-admin/credential-audit-logs', verifySuperAdminOnly, async (req, res) => {
+    try {
+      const limit = Math.min(200, Math.max(10, Number(req.query.limit) || 100));
+      const logs = await serverStaffAccountsAuthStore.listAuditLogs(limit);
+      return res.json({ success: true, logs, total: logs.length });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err?.message || 'Failed to load credential audit logs' });
+    }
+  });
+
+  /**
+   * =========================================================================
    * FIRST 7 COMPANY ACCOUNTS AUTHENTICATION & MANDATORY PASSWORD CHANGE API
    * =========================================================================
    */
@@ -2462,6 +2815,12 @@ Instructions:
       const companyRes = await defaultCompanyAccountsAuthStore.authenticate(cleanId, cleanPw);
       if (companyRes.matchedAccountRecord) {
         return res.status(companyRes.statusCode).json(companyRes);
+      }
+
+      // Check Delivery Rider & Dealer managed credential store
+      const staffRes = await serverStaffAccountsAuthStore.authenticateStaff(cleanId, cleanPw);
+      if (staffRes.matchedAccountRecord) {
+        return res.status(staffRes.statusCode).json(staffRes);
       }
 
       // Check persisted customer accounts (registered via Customer Registration / Binary Tree)
@@ -2501,7 +2860,16 @@ Instructions:
         currentPassword: String(currentPassword || ''),
         newPassword: String(newPassword || '')
       });
-      return res.status(result.statusCode).json(result);
+      if (result.statusCode !== 404) {
+        return res.status(result.statusCode).json(result);
+      }
+
+      const staffResult = await serverStaffAccountsAuthStore.changeOwnPassword({
+        identifierOrUserId: String(identifierOrUserId || ''),
+        currentPassword: String(currentPassword || ''),
+        newPassword: String(newPassword || '')
+      });
+      return res.status(staffResult.statusCode).json(staffResult);
     } catch (err: any) {
       return res.status(500).json({
         success: false,
@@ -2672,7 +3040,8 @@ function parseSmsWithSmartHeuristics(rawText: string, senderPhone: string, sende
     const itemListStr = items.map((i) => `${i.productName} x ${i.quantity}`).join(', ');
     aiReplyText = `সম্মানিত গ্রাহক, আপনার অর্ডারটি (${itemListStr}) সিস্টেমে নথিভুক্ত হয়েছে। মোট প্রদেয়: ৳${grandTotal} (ক্যাশ অন ডেলিভারি)। ডেলিভারি এলাকা: ${address.fullServiceAddress}। ট্র্যাকিং ও নিশ্চিতকরণ করতে ধন্যবাদ APON BAZAR (আপন বাজার) এ থাকার জন্য!`;
   } else if (intent === 'check_status') {
-    aiReplyText = `সম্মানিত গ্রাহক, আপনার মোবাইল নম্বর (${extractedPhone}) এর বিপরীতে অর্ডারটি সেন্ট্রাল হাব থেকে ডেলিভারির জন্য প্রস্তুত হচ্ছে। কিছুক্ষণের মধ্যে রাইডার যোগাযোগ করবে। হেল্পলাইন: ০৯৬১২-APONBAZAR।`;
+    const helplineSuffix = cachedCompanyPhone ? ` হেল্পলাইন: ${cachedCompanyPhone}।` : '';
+    aiReplyText = `সম্মানিত গ্রাহক, আপনার মোবাইল নম্বর (${extractedPhone}) এর বিপরীতে অর্ডারটি সেন্ট্রাল হাব থেকে ডেলিভারির জন্য প্রস্তুত হচ্ছে। কিছুক্ষণের মধ্যে রাইডার যোগাযোগ করবে।${helplineSuffix}`;
   } else if (intent === 'price_inquiry') {
     aiReplyText = `APON BAZAR সেরা অফার: খাঁটি সরিষার তেল ১লি ৳২১০, সুন্দরবনের মধু ৫০০গ্রা ৳৬৫০, গাওয়া ঘি ৫০০গ্রা ৳৬২০, মিনিকেট চাল ২৫কেজি ৳১৮৫০। অর্ডার করতে পণ্য ও আপনার ঠিকানা লিখে এসএমএস করুন।`;
   } else {

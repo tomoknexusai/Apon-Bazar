@@ -1417,9 +1417,17 @@ export interface ReturnRequest {
   createdAt: string;
 }
 
+export interface EmailProviderStatus {
+  configured: boolean;
+  provider: 'smtp' | 'resend' | 'sendgrid' | 'unconfigured';
+  senderConfigured: boolean;
+  message: string;
+}
+
 export interface SystemSettings {
   siteName?: string;
   companyName: string;
+  companyNameBn?: string;
   tokenName: string;
   currencyCode: string;
   currencySymbol: string;
@@ -1430,13 +1438,80 @@ export interface SystemSettings {
   enablePushNotifications?: boolean;
   maintenanceMode?: boolean;
   currency?: string;
+  supportEmail?: string;
+  customerServiceEmail?: string;
   sellerContactEmail?: string;
   dealerContactEmail?: string;
-  supportEmail?: string;
+  officialPhone?: string;
+  companyAddress?: string;
+  websiteUrl?: string;
+  companyLogoUrl?: string;
+  invoiceDisplayInfo?: string;
+  emailSenderName?: string;
+  emailSenderEmail?: string;
+  emailProviderStatus?: EmailProviderStatus;
   globalDiscount?: number;
   discountSettings?: CatalogDiscountSettings;
   companyMasterId?: string;
+  updatedBy?: string;
   updatedAt?: string;
+}
+
+export interface ManagedStaffAccount {
+  id: string;
+  username: string;
+  permanentMemberId: string;
+  aponUniqueId: string;
+  fullName: string;
+  email: string;
+  mobileNumber: string;
+  roleGroup: 'rider' | 'dealer';
+  primaryRole: UserRole;
+  roles: UserRole[];
+  accountStatus: AccountStatus;
+  mustChangePassword: boolean;
+  passwordSetBySuperAdmin: boolean;
+  lastLogin?: string;
+  lastPasswordResetAt?: string;
+  createdAt: string;
+  updatedAt: string;
+  // Rider profile fields
+  vehicleType?: string;
+  vehicleRegNumber?: string;
+  drivingLicenseNumber?: string;
+  // Dealer profile fields
+  shopName?: string;
+  businessType?: BusinessType | string;
+  tradeLicenseBusinessName?: string;
+  tradeLicenseNumber?: string;
+  dealerOwnerName?: string;
+  zoneId?: string;
+  zoneName?: string;
+  mandatoryAddress?: ServiceAddress;
+}
+
+export interface CredentialAuditLogRecord {
+  id: string;
+  superAdminId: string;
+  superAdminName: string;
+  targetAccountId: string;
+  targetUsername: string;
+  targetRole: string;
+  actionType:
+    | 'COMPANY_SETTINGS_UPDATED'
+    | 'RIDER_ACCOUNT_CREATED'
+    | 'RIDER_CREDENTIALS_UPDATED'
+    | 'RIDER_PASSWORD_RESET'
+    | 'RIDER_STATUS_CHANGED'
+    | 'DEALER_ACCOUNT_CREATED'
+    | 'DEALER_CREDENTIALS_UPDATED'
+    | 'DEALER_PASSWORD_RESET'
+    | 'DEALER_STATUS_CHANGED'
+    | 'STAFF_SELF_PASSWORD_CHANGED'
+    | string;
+  changedFields: string[];
+  details: string;
+  timestamp: string;
 }
 
 export interface AuditLog {

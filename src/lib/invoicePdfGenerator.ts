@@ -1,13 +1,31 @@
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
-import { Order } from '../types';
+import { Order, SystemSettings } from '../types';
 import { formatTP } from './ecommerce-data';
+
+function resolveInvoiceCompanySettings(explicit?: Partial<SystemSettings>): Partial<SystemSettings> {
+  if (explicit) return explicit;
+  try {
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem('tomshopbd_system_settings') : null;
+    if (raw) return JSON.parse(raw) as Partial<SystemSettings>;
+  } catch {}
+  return {};
+}
 
 /**
  * Creates a clean, high-precision DOM template formatted specifically for crisp PDF rendering.
  * Uses standard RGB colors and fonts to eliminate any canvas rendering or oklch color issues.
  */
-const createInvoiceDomTemplate = (order: Order): HTMLDivElement => {
+const createInvoiceDomTemplate = (order: Order, explicitSettings?: Partial<SystemSettings>): HTMLDivElement => {
+  const settings = resolveInvoiceCompanySettings(explicitSettings);
+  const companyEn = (settings.companyName || 'APON BAZAR').trim();
+  const companyBn = (settings.companyNameBn || 'আপন বাজার').trim();
+  const hotline = (settings.officialPhone || '').trim();
+  const supportEmail = (settings.supportEmail || settings.customerServiceEmail || '').trim();
+  const websiteUrl = (settings.websiteUrl || '').trim();
+  const companyAddress = (settings.companyAddress || '').trim();
+  const invoiceNote = (settings.invoiceDisplayInfo || '').trim();
+  const contactLine = [hotline, supportEmail, websiteUrl].filter(Boolean).join(' • ');
   const container = document.createElement('div');
   container.id = `temp-invoice-render-${order.id}`;
   container.style.position = 'fixed';
@@ -79,14 +97,18 @@ const createInvoiceDomTemplate = (order: Order): HTMLDivElement => {
       <div style="background: linear-gradient(135deg, #059669 0%, #047857 50%, #065f46 100%); color: #ffffff; padding: 22px 26px; border-radius: 12px; margin-bottom: 22px; display: flex; justify-content: space-between; align-items: center;">
         <div>
           <div style="display: flex; align-items: center; gap: 8px;">
-            <span style="font-size: 22px; font-weight: 900; letter-spacing: 0.5px; text-transform: uppercase;">APON BAZAR</span>
+            <span style="font-size: 22px; font-weight: 900; letter-spacing: 0.5px; text-transform: uppercase;">${companyEn} (${companyBn})</span>
           </div>
           <div style="font-size: 11px; color: #a7f3d0; margin-top: 4px; font-weight: 500;">
             অফিসিয়াল ট্যাক্স ও সেলস ইনভয়েস (Official Tax & Sales Invoice)
           </div>
+          ${(companyAddress || invoiceNote) ? `
+          <div style="font-size: 10px; color: #d1fae5; margin-top: 2px;">
+            ${[companyAddress, invoiceNote].filter(Boolean).join(' • ')}
+          </div>` : `
           <div style="font-size: 10px; color: #d1fae5; margin-top: 2px;">
             National E-Commerce & Automated Location-Routed Logistics Network
-          </div>
+          </div>`}
         </div>
 
         <div style="text-align: right; background: rgba(255, 255, 255, 0.12); padding: 10px 16px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.25);">
@@ -144,11 +166,11 @@ const createInvoiceDomTemplate = (order: Order): HTMLDivElement => {
           </div>
           <div style="font-size: 11px; color: #1e293b; margin-bottom: 4px;">
             <strong style="color: #065f46;">Assigned Dealer Outlet:</strong><br/>
-            <span>${order.assignedDealerShopName || 'TOMOK Prime Dealer Outlet'}</span>
+            <span>${order.assignedDealerShopName || `${companyEn} Authorized Dealer Outlet`}</span>
           </div>
           <div style="font-size: 11px; color: #1e293b;">
             <strong style="color: #065f46;">Assigned Delivery Rider:</strong><br/>
-            <span>${order.assignedDeliveryRiderName || 'Authorized Delivery Rider'} (${order.assignedDeliveryRiderPhone || '01700-000000'})</span>
+            <span>${order.assignedDeliveryRiderName || 'Authorized Delivery Rider'}${order.assignedDeliveryRiderPhone ? ` (${order.assignedDeliveryRiderPhone})` : ''}</span>
           </div>
         </div>
       </div>
@@ -190,8 +212,8 @@ const createInvoiceDomTemplate = (order: Order): HTMLDivElement => {
 
           <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #e2e8f0; padding-top: 10px; margin-top: 8px;">
             <div style="font-family: monospace; font-size: 9px; color: #475569;">
-              <strong>HASH:</strong> SHA256-AUTH-${order.otpCode || '9842'}-${invoiceNum.slice(-6)}<br/>
-              <strong>HOTLINE:</strong> 09612-866665 | support@aponbazar.com
+              <strong>HASH:</strong> SHA256-AUTH-${order.otpCode || '9842'}-${invoiceNum.slice(-6)}
+              ${contactLine ? `<br/><strong>CONTACT:</strong> ${contactLine}` : ''}
             </div>
             <div style="background-color: #d1fae5; border: 1px solid #6ee7b7; color: #065f46; font-size: 9px; font-weight: 800; padding: 4px 8px; border-radius: 6px; text-transform: uppercase;">
               VERIFIED
@@ -245,7 +267,7 @@ const createInvoiceDomTemplate = (order: Order): HTMLDivElement => {
 
       <!-- Footer Note -->
       <div style="text-align: center; font-size: 9px; color: #94a3b8; margin-top: 20px; border-top: 1px solid #e2e8f0; padding-top: 8px;">
-        APON BAZAR (আপন বাজার) • Customer Care: +880 9612-866665 • www.aponbazar.com • Thank you for shopping with us!
+        ${companyEn} (${companyBn})${contactLine ? ` • ${contactLine}` : ''} • Thank you for shopping with us!
       </div>
     </div>
   `;
@@ -258,13 +280,24 @@ const createInvoiceDomTemplate = (order: Order): HTMLDivElement => {
  * Renders high-resolution rasterized canvas into vector A4 PDF to support all character sets,
  * with fallback to programmatic vector rendering.
  */
-export const downloadInvoicePDF = async (order: Order, _optionalElementId?: string): Promise<boolean> => {
+export const downloadInvoicePDF = async (
+  order: Order,
+  _optionalElementId?: string,
+  explicitSettings?: Partial<SystemSettings>
+): Promise<boolean> => {
+  const settings = resolveInvoiceCompanySettings(explicitSettings);
+  const companyEn = (settings.companyName || 'APON BAZAR').trim();
+  const hotline = (settings.officialPhone || '').trim();
+  const supportEmail = (settings.supportEmail || settings.customerServiceEmail || '').trim();
+  const websiteUrl = (settings.websiteUrl || '').trim();
+  const contactLine = [hotline, supportEmail, websiteUrl].filter(Boolean).join(' | ');
+
   try {
     const filename = `Invoice_${order.invoiceNumber || order.id || 'ORDER'}.pdf`;
 
     // 1. Create dedicated, pristinely styled DOM container for clean high-DPI rendering
     if (typeof document !== 'undefined') {
-      const templateEl = createInvoiceDomTemplate(order);
+      const templateEl = createInvoiceDomTemplate(order, settings);
       document.body.appendChild(templateEl);
 
       try {
@@ -337,7 +370,7 @@ export const downloadInvoicePDF = async (order: Order, _optionalElementId?: stri
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(18);
     doc.setFont('helvetica', 'bold');
-    doc.text('APON BAZAR', 40, 38);
+    doc.text(companyEn.toUpperCase(), 40, 38);
 
     doc.setFontSize(9);
     doc.setFont('helvetica', 'normal');
@@ -509,12 +542,14 @@ export const downloadInvoicePDF = async (order: Order, _optionalElementId?: stri
     doc.setFont('helvetica', 'normal');
     doc.text('Security Verification: SHA256-VERIFIED Electronic Invoice', 40, startY - 20);
     doc.text('Token points (TP) are credited to TOMOK Wallet upon OTP delivery confirmation.', 40, startY - 8);
-    doc.text('Customer Hotline: +880 9612-866665 | support@aponbazar.com', 40, startY + 4);
+    if (contactLine) {
+      doc.text(`Contact: ${contactLine}`, 40, startY + 4);
+    }
 
     // Footer
     doc.setTextColor(148, 163, 184);
     doc.setFontSize(7.5);
-    doc.text('APON BAZAR - Automated Location-Routed E-Commerce Platform | Single Non-Duplicate Invoice', 40, 785);
+    doc.text(`${companyEn} - Automated Location-Routed E-Commerce Platform | Single Non-Duplicate Invoice`, 40, 785);
 
     doc.save(filename);
     return true;

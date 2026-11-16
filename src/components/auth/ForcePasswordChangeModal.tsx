@@ -18,6 +18,14 @@ export const ForcePasswordChangeModal: React.FC = () => {
     currentUser?.permanentMemberId ||
     currentUser?.id;
 
+  const isStaffManagedAccount =
+    currentUser?.primaryRole === 'delivery_rider' ||
+    currentUser?.primaryRole === 'rider' ||
+    currentUser?.primaryRole === 'delivery_man' ||
+    currentUser?.primaryRole === 'dealer' ||
+    currentUser?.primaryRole === 'vendor_dealer_shop' ||
+    currentUser?.primaryRole === 'vendor';
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -28,10 +36,15 @@ export const ForcePasswordChangeModal: React.FC = () => {
     const initialDefault = ['12', '34', '56', '78'].join('');
 
     if (!cleanCurrent) {
-      setError('বর্তমান / প্রাথমিক পাসওয়ার্ডটি লিখুন।');
+      setError('বর্তমান / অস্থায়ী পাসওয়ার্ডটি লিখুন।');
       return;
     }
-    if (cleanNew.length < 6) {
+    if (isStaffManagedAccount) {
+      if (cleanNew.length < 8 || !/^(?=.*[A-Za-z])(?=.*\d).{8,}$/.test(cleanNew)) {
+        setError('নতুন পাসওয়ার্ড কমপক্ষে ৮ অক্ষরের হতে হবে এবং এতে অন্তত ১টি অক্ষর ও ১টি সংখ্যা থাকতে হবে।');
+        return;
+      }
+    } else if (cleanNew.length < 6) {
       setError('নতুন পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে।');
       return;
     }
@@ -88,7 +101,7 @@ export const ForcePasswordChangeModal: React.FC = () => {
               <span>অ্যাকাউন্ট আইডি: <span className="font-mono">{companyAccountId}</span></span>
             </div>
             <p className="text-amber-800 dark:text-amber-300 leading-relaxed">
-              {currentUser?.fullName} — ড্যাশবোর্ড বা নেটওয়ার্ক ট্রি ব্যবহার করার আগে অনুগ্রহ করে আপনার প্রাথমিক পাসওয়ার্ডটি পরিবর্তন করে একটি নিজস্ব শক্তিশালী পাসওয়ার্ড সেট করুন।
+              {currentUser?.fullName} — ড্যাশবোর্ড বা নেটওয়ার্ক ট্রি ব্যবহার করার আগে অনুগ্রহ করে আপনার অস্থায়ী/প্রাথমিক পাসওয়ার্ডটি পরিবর্তন করে একটি নিজস্ব শক্তিশালী পাসওয়ার্ড সেট করুন।
             </p>
           </div>
 
@@ -100,7 +113,7 @@ export const ForcePasswordChangeModal: React.FC = () => {
 
           <div>
             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-              বর্তমান (প্রাথমিক) পাসওয়ার্ড
+              বর্তমান (প্রাথমিক / অস্থায়ী) পাসওয়ার্ড
             </label>
             <div className="relative">
               <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -108,7 +121,7 @@ export const ForcePasswordChangeModal: React.FC = () => {
                 type={showCurrent ? 'text' : 'password'}
                 value={currentPassword}
                 onChange={(e) => setCurrentPassword(e.target.value)}
-                placeholder="প্রাথমিক পাসওয়ার্ড লিখুন"
+                placeholder="প্রাথমিক বা অস্থায়ী পাসওয়ার্ড লিখুন"
                 autoComplete="current-password"
                 className="w-full pl-9 pr-10 py-2.5 text-sm rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
               />
@@ -125,7 +138,9 @@ export const ForcePasswordChangeModal: React.FC = () => {
 
           <div>
             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-              নতুন পাসওয়ার্ড (কমপক্ষে ৬ অক্ষর)
+              {isStaffManagedAccount
+                ? 'নতুন শক্তিশালী পাসওয়ার্ড (কমপক্ষে ৮ অক্ষর, অক্ষর ও সংখ্যা)'
+                : 'নতুন পাসওয়ার্ড (কমপক্ষে ৬ অক্ষর)'}
             </label>
             <div className="relative">
               <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />

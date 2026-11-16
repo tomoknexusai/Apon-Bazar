@@ -1,7 +1,7 @@
 /**
  * Customer Quick Order via SMS Modal
  * 24/7 AI-Powered Instant Ordering
- * Project: AANO BAZAR (আনো বাজার)
+ * Project: APON BAZAR (আপন বাজার)
  */
 
 import React, { useState } from 'react';
@@ -88,7 +88,9 @@ export const SmsOrderQuickModal: React.FC<Props> = ({
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const directSmsUri = `sms:+8809612226622?body=${encodeURIComponent(smsBody)}`;
+  const { systemSettings } = useAuth();
+  const configuredSmsPhone = (systemSettings?.officialPhone || '').trim();
+  const directSmsUri = configuredSmsPhone ? `sms:${configuredSmsPhone}?body=${encodeURIComponent(smsBody)}` : '';
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
@@ -193,13 +195,15 @@ export const SmsOrderQuickModal: React.FC<Props> = ({
             </div>
 
             <div className="flex items-center gap-2 pt-1">
-              <a
-                href={directSmsUri}
-                className="flex-1 py-2.5 border border-emerald-600 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded-xl text-center font-bold text-xs transition flex items-center justify-center gap-1.5"
-              >
-                <Phone className="w-3.5 h-3.5" />
-                <span>ফোনের SMS অ্যাপ খুলুন</span>
-              </a>
+              {directSmsUri ? (
+                <a
+                  href={directSmsUri}
+                  className="flex-1 py-2.5 border border-emerald-600 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded-xl text-center font-bold text-xs transition flex items-center justify-center gap-1.5"
+                >
+                  <Phone className="w-3.5 h-3.5" />
+                  <span>ফোনের SMS অ্যাপ খুলুন</span>
+                </a>
+              ) : null}
 
               <button
                 type="submit"

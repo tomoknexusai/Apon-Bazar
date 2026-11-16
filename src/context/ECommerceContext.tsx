@@ -1,6 +1,6 @@
 /**
  * E-Commerce & Logistics Context Engine
- * Project: ঘরের বাজার বিডি (Ghorer Bazar BD)
+ * Project: APON BAZAR (আপন বাজার)
  */
 
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
@@ -1648,7 +1648,7 @@ export const ECommerceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         customerPhone: cleanPhone,
         totalCalculatedAmount: 1070,
         deliveryCharge: 60,
-        aiReplyText: `সম্মানিত গ্রাহক, আপনার বার্তাটি সফলভাবে গৃহীত হয়েছে। ২৪/৭ AI স্বয়ংক্রিয়ভাবে আপনার অর্ডার রেকর্ড করেছে। হেল্পলাইন: ০৯৬১২-Apon Bazar।`,
+        aiReplyText: `সম্মানিত গ্রাহক, আপনার বার্তাটি সফলভাবে গৃহীত হয়েছে। ২৪/৭ AI স্বয়ংক্রিয়ভাবে আপনার অর্ডার রেকর্ড করেছে। ধন্যবাদ APON BAZAR (আপন বাজার) এ থাকার জন্য।`,
         aiModelUsed: 'gemini-3.7-flash (Local Heuristic Engine)'
       };
     }

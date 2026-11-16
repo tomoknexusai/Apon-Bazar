@@ -3,13 +3,15 @@
  * Project: APON BAZAR (আপন বাজার)
  */
 
-import { SEOProps } from '../types';
+import { SEOProps, SystemSettings } from '../types';
 
-export function updateMetaTags(props: SEOProps) {
-  const defaultTitle = 'APON BAZAR (আপন বাজার) - Enterprise E-Commerce & Delivery Platform';
-  const defaultDesc = 'APON BAZAR (আপন বাজার): বাংলাদেশের নির্ভরযোগ্য অনলাইন শপিং, ই-কমার্স, নেটওয়ার্ক মার্কেটিং ও বিশ্বস্ত স্থানীয় হোম ডেলিভারি প্ল্যাটফর্ম।';
+export function updateMetaTags(props: SEOProps, companySettings?: Partial<SystemSettings>) {
+  const companyEn = (companySettings?.companyName || 'APON BAZAR').trim();
+  const companyBn = (companySettings?.companyNameBn || 'আপন বাজার').trim();
+  const defaultTitle = `${companyEn} (${companyBn}) - Enterprise E-Commerce & Delivery Platform`;
+  const defaultDesc = `${companyEn} (${companyBn}): বাংলাদেশের নির্ভরযোগ্য অনলাইন শপিং, ই-কমার্স, নেটওয়ার্ক মার্কেটিং ও বিশ্বস্ত স্থানীয় হোম ডেলিভারি প্ল্যাটফর্ম।`;
 
-  const title = props.title ? `${props.title} | APON BAZAR` : defaultTitle;
+  const title = props.title ? `${props.title} | ${companyEn}` : defaultTitle;
   const description = props.description || defaultDesc;
   const canonical = props.canonicalUrl || window.location.href;
 
@@ -52,7 +54,7 @@ export function updateMetaTags(props: SEOProps) {
   linkCanonical.setAttribute('href', canonical);
 
   // Schema.org JSON-LD
-  injectSchemaJsonLd((props.schemaType as any) || 'Organization');
+  injectSchemaJsonLd((props.schemaType as any) || 'Organization', companySettings);
 }
 
 function setMetaTag(attrName: 'name' | 'property', attrValue: string, content: string) {
@@ -65,7 +67,10 @@ function setMetaTag(attrName: 'name' | 'property', attrValue: string, content: s
   element.setAttribute('content', content);
 }
 
-function injectSchemaJsonLd(type: 'Organization' | 'LocalBusiness' | 'WebSite') {
+function injectSchemaJsonLd(
+  type: 'Organization' | 'LocalBusiness' | 'WebSite',
+  companySettings?: Partial<SystemSettings>
+) {
   let script = document.getElementById('schema-jsonld') as HTMLScriptElement | null;
   if (!script) {
     script = document.createElement('script');
@@ -74,23 +79,38 @@ function injectSchemaJsonLd(type: 'Organization' | 'LocalBusiness' | 'WebSite') 
     document.head.appendChild(script);
   }
 
-  const schemaData = {
+  const companyEn = (companySettings?.companyName || 'APON BAZAR').trim();
+  const companyBn = (companySettings?.companyNameBn || 'আপন বাজার').trim();
+  const siteUrl = (companySettings?.websiteUrl || '').trim() || window.location.origin;
+  const logoRaw = (companySettings?.companyLogoUrl || '/apon-bazar-logo.png').trim();
+  const logoUrl = logoRaw.startsWith('http') || logoRaw.startsWith('data:')
+    ? logoRaw
+    : `${window.location.origin}${logoRaw.startsWith('/') ? '' : '/'}${logoRaw}`;
+
+  const schemaData: Record<string, any> = {
     '@context': 'https://schema.org',
     '@type': type,
-    name: 'APON BAZAR',
-    url: window.location.origin,
-    logo: `${window.location.origin}/apon-bazar-logo.png`,
-    description: 'APON BAZAR (আপন বাজার) Enterprise E-commerce, Network Marketing and Local Delivery Platform in Bangladesh',
+    name: companyEn,
+    alternateName: companyBn,
+    url: siteUrl,
+    logo: logoUrl,
+    description: `${companyEn} (${companyBn}) Enterprise E-commerce, Network Marketing and Local Delivery Platform in Bangladesh`,
     address: {
       '@type': 'PostalAddress',
+      ...(companySettings?.companyAddress ? { streetAddress: companySettings.companyAddress } : {}),
       addressLocality: 'Dhaka',
-      addressRegion: 'Dhaka Division',
       addressCountry: 'BD'
     },
-    currenciesAccepted: 'BDT',
-    openingHours: 'Mo-Su 00:00-24:00',
-    telephone: '+8801700000000'
+    currenciesAccepted: companySettings?.currencyCode || 'BDT',
+    openingHours: 'Mo-Su 00:00-24:00'
   };
+
+  if (companySettings?.officialPhone?.trim()) {
+    schemaData.telephone = companySettings.officialPhone.trim();
+  }
+  if (companySettings?.supportEmail?.trim()) {
+    schemaData.email = companySettings.supportEmail.trim();
+  }
 
   script.textContent = JSON.stringify(schemaData, null, 2);
 }

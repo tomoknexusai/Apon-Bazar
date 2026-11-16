@@ -411,6 +411,34 @@ export function createCompanyAccountsAuthStore(customStorePath?: string) {
           account: sanitizeAccount(updated)
         };
       });
+    },
+
+    hasCredentialConflict: (params: { username?: string; email?: string; excludeId?: string }) => {
+      const payload = loadAndDeduplicate();
+      if (params.username) {
+        const uLower = params.username.trim().toLowerCase();
+        if (
+          payload.accounts.some(
+            (a) =>
+              a.userId !== params.excludeId &&
+              (a.username.trim().toLowerCase() === uLower ||
+                a.companyId.trim().toLowerCase() === uLower)
+          )
+        ) {
+          return 'username' as const;
+        }
+      }
+      if (params.email) {
+        const eLower = params.email.trim().toLowerCase();
+        if (
+          payload.accounts.some(
+            (a) => a.userId !== params.excludeId && a.email.trim().toLowerCase() === eLower
+          )
+        ) {
+          return 'email' as const;
+        }
+      }
+      return null;
     }
   };
 }

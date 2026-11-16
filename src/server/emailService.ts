@@ -34,35 +34,64 @@ export interface EmailSendResult {
 
 export interface SmtpConfigSummary {
   configured: boolean;
-  provider: 'smtp' | 'unconfigured';
+  provider: 'smtp' | 'resend' | 'sendgrid' | 'unconfigured';
   fromAddress: string;
   host?: string;
   port?: number;
+  message: string;
 }
 
-export function getEmailProviderConfig(): SmtpConfigSummary {
+export function getEmailProviderConfig(overrideSender?: { name?: string; email?: string }): SmtpConfigSummary {
   const host = (process.env.SMTP_HOST || '').trim();
   const portRaw = (process.env.SMTP_PORT || '').trim();
   const user = (process.env.SMTP_USER || '').trim();
   const pass = (process.env.SMTP_PASS || '').trim();
-  const fromAddress =
-    (process.env.SMTP_FROM || '').trim() ||
-    (user ? `Apon Bazar <${user}>` : 'Apon Bazar <no-reply@aponbazar.com>');
+  const resendKey = (process.env.RESEND_API_KEY || '').trim();
+  const sendgridKey = (process.env.SENDGRID_API_KEY || '').trim();
 
-  if (!host || !user || !pass) {
+  const customFrom =
+    overrideSender?.email && overrideSender.email.trim()
+      ? `${(overrideSender.name || 'APON BAZAR').trim()} <${overrideSender.email.trim()}>`
+      : '';
+  const fromAddress =
+    customFrom ||
+    (process.env.SMTP_FROM || '').trim() ||
+    (user ? `APON BAZAR <${user}>` : '');
+
+  if (host && user && pass) {
     return {
-      configured: false,
-      provider: 'unconfigured',
-      fromAddress
+      configured: true,
+      provider: 'smtp',
+      fromAddress,
+      host,
+      port: portRaw ? parseInt(portRaw, 10) || 587 : 587,
+      message: `SMTP provider (${host}) is configured.`
+    };
+  }
+
+  if (resendKey) {
+    return {
+      configured: true,
+      provider: 'resend',
+      fromAddress,
+      message: 'Resend API provider key is configured.'
+    };
+  }
+
+  if (sendgridKey) {
+    return {
+      configured: true,
+      provider: 'sendgrid',
+      fromAddress,
+      message: 'SendGrid API provider key is configured.'
     };
   }
 
   return {
-    configured: true,
-    provider: 'smtp',
+    configured: false,
+    provider: 'unconfigured',
     fromAddress,
-    host,
-    port: portRaw ? parseInt(portRaw, 10) || 587 : 587
+    message: 'Email provider is not configured (no SMTP_HOST/SMTP_USER/SMTP_PASS or email API key present).'
   };
 }
 

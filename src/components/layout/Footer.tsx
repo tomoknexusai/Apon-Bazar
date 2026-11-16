@@ -53,6 +53,13 @@ export const Footer: React.FC = () => {
     );
   };
 
+  const companyEn = (systemSettings?.companyName || 'APON BAZAR').trim();
+  const companyBn = (systemSettings?.companyNameBn || 'আপন বাজার').trim();
+  const officialPhone = (systemSettings?.officialPhone || '').trim();
+  const officialEmail = (systemSettings?.supportEmail || systemSettings?.customerServiceEmail || '').trim();
+  const officialAddress = (systemSettings?.companyAddress || '').trim();
+  const officialWebsite = (systemSettings?.websiteUrl || '').trim();
+
   const openContact = () => {
     openInfoModal(
       language === 'bn' ? 'যোগাযোগ ও সাপোর্ট' : 'Contact & Support',
@@ -62,24 +69,46 @@ export const Footer: React.FC = () => {
           <div className="flex items-center gap-2.5 p-2 bg-neutral-800/80 rounded-xl">
             <Phone className="w-4 h-4 text-emerald-400 shrink-0" />
             <div>
-              <div className="text-[10px] text-neutral-400">হটলাইন (২৪/৭)</div>
-              <div className="font-bold text-white">+880 9612-APONBAZAR (০৯৬১২-২৭৬৬২)</div>
+              <div className="text-[10px] text-neutral-400">অফিসিয়াল ফোন</div>
+              <div className="font-bold text-white">
+                {officialPhone || (language === 'bn' ? 'এখনো কনফিগার করা হয়নি' : 'Not configured yet')}
+              </div>
             </div>
           </div>
           <div className="flex items-center gap-2.5 p-2 bg-neutral-800/80 rounded-xl">
             <Mail className="w-4 h-4 text-emerald-400 shrink-0" />
             <div>
               <div className="text-[10px] text-neutral-400">ইমেইল</div>
-              <div className="font-bold text-white">support@aponbazar.com</div>
+              <div className="font-bold text-white">
+                {officialEmail || (language === 'bn' ? 'এখনো কনফিগার করা হয়নি' : 'Not configured yet')}
+              </div>
             </div>
           </div>
           <div className="flex items-center gap-2.5 p-2 bg-neutral-800/80 rounded-xl">
             <MapPin className="w-4 h-4 text-emerald-400 shrink-0" />
             <div>
-              <div className="text-[10px] text-neutral-400">হেড অফিস</div>
-              <div className="font-bold text-white">প্লট ১৪, রোড ০২, মিরপুর ১০, ঢাকা ১২১৬, বাংলাদেশ</div>
+              <div className="text-[10px] text-neutral-400">ঠিকানা</div>
+              <div className="font-bold text-white">
+                {officialAddress || (language === 'bn' ? 'এখনো কনফিগার করা হয়নি' : 'Not configured yet')}
+              </div>
             </div>
           </div>
+          {officialWebsite && (
+            <div className="flex items-center gap-2.5 p-2 bg-neutral-800/80 rounded-xl">
+              <Globe className="w-4 h-4 text-emerald-400 shrink-0" />
+              <div>
+                <div className="text-[10px] text-neutral-400">ওয়েবসাইট</div>
+                <a
+                  href={officialWebsite}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-bold text-emerald-400 hover:underline"
+                >
+                  {officialWebsite}
+                </a>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -134,11 +163,18 @@ export const Footer: React.FC = () => {
           {/* Column 1: Brand & Identity */}
           <div className="space-y-3 col-span-2 md:col-span-1">
             <div className="flex items-center gap-2.5">
-              <BrandLogo size="md" iconOnly={true} className="shrink-0" />
+              <BrandLogo
+                size="md"
+                iconOnly={true}
+                logoSrc={systemSettings?.companyLogoUrl}
+                brandTitle={companyEn}
+                brandTitleBn={companyBn}
+                className="shrink-0"
+              />
               <div>
                 <h3 className="font-black text-neutral-900 dark:text-white text-base leading-none flex items-center gap-1">
-                  <span className="text-emerald-700 dark:text-emerald-400">Apon</span>
-                  <span className="text-orange-500">Bazar</span>
+                  <span className="text-emerald-700 dark:text-emerald-400">{companyEn}</span>
+                  <span className="text-xs font-bold text-orange-500">({companyBn})</span>
                 </h3>
                 <span className="text-[10px] text-emerald-800 dark:text-emerald-300 font-medium block mt-0.5">
                   — আপনার প্রয়োজন, আমাদের প্রতিশ্রুতি —
@@ -148,6 +184,13 @@ export const Footer: React.FC = () => {
             <p className="text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-400">
               বাংলাদেশের আধুনিক, নির্ভরযোগ্য অনলাইন শপিং, বিশ্বস্ত অর্গানিক গ্রোসারি, বাইনারি নেটওয়ার্ক ও দ্রুততম ডিলার পয়েন্ট ডেলিভারি প্ল্যাটফর্ম।
             </p>
+            {(officialPhone || officialEmail || officialAddress) && (
+              <div className="space-y-1 text-[10px] text-neutral-600 dark:text-neutral-400">
+                {officialPhone && <div>📞 {officialPhone}</div>}
+                {officialEmail && <div>✉️ {officialEmail}</div>}
+                {officialAddress && <div>📍 {officialAddress}</div>}
+              </div>
+            )}
             <div className="pt-1 flex items-center gap-2 text-[10px] text-emerald-700 dark:text-emerald-300 font-medium">
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
               <span>১০০% ক্যাশ অন ডেলিভারি ও রিয়েল-টাইম ট্র্যাকিং</span>
@@ -276,7 +319,7 @@ export const Footer: React.FC = () => {
 
         {/* Bottom Bar */}
         <div className="border-t border-neutral-100 dark:border-neutral-800 pt-4 flex flex-col sm:flex-row items-center justify-between text-[11px] text-neutral-500 gap-2">
-          <span>© ২০২৬ আপন বাজার (Apon Bazar). সর্বস্বত্ব সংরক্ষিত।</span>
+          <span>© ২০২৬ {companyBn} ({companyEn}). সর্বস্বত্ব সংরক্ষিত।</span>
           <span className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400 font-medium">
             <ShieldCheck className="w-4 h-4 text-emerald-500" />
             <span>নিরাপদ ও নির্ভরযোগ্য ই-কমার্স ইকোসিস্টেম</span>

@@ -262,7 +262,7 @@ export function normalizeRoleTier(role: UserRole): string {
  */
 export const SUPER_ADMIN_RLS_POLICIES_SQL = `-- ==============================================================================
 -- 1. ROW LEVEL SECURITY (RLS) & IMMUTABILITY ENFORCEMENT SCRIPT
--- Project: TOMSHOPBD
+-- Project: APON BAZAR (আপন বাজার)
 -- Target Fixed Super Admin: AANO-SADMIN-001
 -- ==============================================================================
 

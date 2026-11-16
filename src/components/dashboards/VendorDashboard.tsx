@@ -1,6 +1,6 @@
 /**
  * Vendor / Dealer Dashboard Component
- * Project: ঘরের বাজার বিডি (Ghorer Bazar BD)
+ * Project: APON BAZAR (আপন বাজার)
  */
 
 import React, { useState } from 'react';
@@ -25,7 +25,7 @@ export const VendorDashboard: React.FC = () => {
     currentUser?.shopName || currentUser?.mandatoryAddress?.shopName || 'Apon Bazar ডিলার প্রিমিয়াম শপ'
   );
   const [dealerEmail, setDealerEmail] = useState(() =>
-    currentUser?.email || 'dealer@aponbazar.com'
+    currentUser?.email || ''
   );
   const [tradeLicense, setTradeLicense] = useState('TRAD/CTG/2026/88492');
   const [commissionTier, setCommissionTier] = useState('প্ল্যাটিনাম ডিলার (8.5% Commission)');
