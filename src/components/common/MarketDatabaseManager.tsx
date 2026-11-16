@@ -6,7 +6,7 @@
  * - General/Vendor/Customer: Searchable Read-Only view with Google Maps location links
  * 
  * Hierarchy: Division -> District -> Upazila -> Union -> Ward -> Market/Bazar
- * Project: ঘরের বাজার বিডি (Ghorer Bazar BD)
+ * Project: APON BAZAR (আপন বাজার)
  */
 
 import React, { useState, useMemo } from 'react';
@@ -418,7 +418,7 @@ export const MarketDatabaseManager: React.FC<MarketDatabaseManagerProps> = ({
 
     const timestamp = new Date().toISOString().slice(0, 10);
     const wardSlug = selectedWard ? selectedWard.replace(/\s+/g, '_') : 'all_wards';
-    link.setAttribute('download', `ghorer_bazar_markets_${wardSlug}_${timestamp}.csv`);
+    link.setAttribute('download', `apon_bazar_markets_${wardSlug}_${timestamp}.csv`);
 
     document.body.appendChild(link);
     link.click();

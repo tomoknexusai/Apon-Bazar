@@ -79,7 +79,7 @@ const createInvoiceDomTemplate = (order: Order): HTMLDivElement => {
       <div style="background: linear-gradient(135deg, #059669 0%, #047857 50%, #065f46 100%); color: #ffffff; padding: 22px 26px; border-radius: 12px; margin-bottom: 22px; display: flex; justify-content: space-between; align-items: center;">
         <div>
           <div style="display: flex; align-items: center; gap: 8px;">
-            <span style="font-size: 22px; font-weight: 900; letter-spacing: 0.5px; text-transform: uppercase;">TOMSHOPBD</span>
+            <span style="font-size: 22px; font-weight: 900; letter-spacing: 0.5px; text-transform: uppercase;">APON BAZAR</span>
           </div>
           <div style="font-size: 11px; color: #a7f3d0; margin-top: 4px; font-weight: 500;">
             অফিসিয়াল ট্যাক্স ও সেলস ইনভয়েস (Official Tax & Sales Invoice)
@@ -191,7 +191,7 @@ const createInvoiceDomTemplate = (order: Order): HTMLDivElement => {
           <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #e2e8f0; padding-top: 10px; margin-top: 8px;">
             <div style="font-family: monospace; font-size: 9px; color: #475569;">
               <strong>HASH:</strong> SHA256-AUTH-${order.otpCode || '9842'}-${invoiceNum.slice(-6)}<br/>
-              <strong>HOTLINE:</strong> 09612-866665 | support@tomshopbd.com
+              <strong>HOTLINE:</strong> 09612-866665 | support@aponbazar.com
             </div>
             <div style="background-color: #d1fae5; border: 1px solid #6ee7b7; color: #065f46; font-size: 9px; font-weight: 800; padding: 4px 8px; border-radius: 6px; text-transform: uppercase;">
               VERIFIED
@@ -245,7 +245,7 @@ const createInvoiceDomTemplate = (order: Order): HTMLDivElement => {
 
       <!-- Footer Note -->
       <div style="text-align: center; font-size: 9px; color: #94a3b8; margin-top: 20px; border-top: 1px solid #e2e8f0; padding-top: 8px;">
-        TOMSHOPBD • Customer Care: +880 9612-866665 • www.tomshopbd.com • Thank you for shopping with us!
+        APON BAZAR (আপন বাজার) • Customer Care: +880 9612-866665 • www.aponbazar.com • Thank you for shopping with us!
       </div>
     </div>
   `;
@@ -337,7 +337,7 @@ export const downloadInvoicePDF = async (order: Order, _optionalElementId?: stri
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(18);
     doc.setFont('helvetica', 'bold');
-    doc.text('TOMSHOPBD', 40, 38);
+    doc.text('APON BAZAR', 40, 38);
 
     doc.setFontSize(9);
     doc.setFont('helvetica', 'normal');
@@ -509,12 +509,12 @@ export const downloadInvoicePDF = async (order: Order, _optionalElementId?: stri
     doc.setFont('helvetica', 'normal');
     doc.text('Security Verification: SHA256-VERIFIED Electronic Invoice', 40, startY - 20);
     doc.text('Token points (TP) are credited to TOMOK Wallet upon OTP delivery confirmation.', 40, startY - 8);
-    doc.text('Customer Hotline: +880 9612-866665 | support@tomshopbd.com', 40, startY + 4);
+    doc.text('Customer Hotline: +880 9612-866665 | support@aponbazar.com', 40, startY + 4);
 
     // Footer
     doc.setTextColor(148, 163, 184);
     doc.setFontSize(7.5);
-    doc.text('TOMSHOPBD - Automated Location-Routed E-Commerce Platform | Single Non-Duplicate Invoice', 40, 785);
+    doc.text('APON BAZAR - Automated Location-Routed E-Commerce Platform | Single Non-Duplicate Invoice', 40, 785);
 
     doc.save(filename);
     return true;
@@ -536,7 +536,7 @@ export const printInvoiceView = (elementId?: string) => {
         win.document.write(`
           <html>
             <head>
-              <title>TOMSHOPBD - Official Invoice</title>
+              <title>APON BAZAR (আপন বাজার) - Official Invoice</title>
               <style>
                 body { font-family: 'Segoe UI', Arial, sans-serif; padding: 20px; color: #0f172a; background: #fff; }
                 table { width: 100%; border-collapse: collapse; margin-top: 15px; }

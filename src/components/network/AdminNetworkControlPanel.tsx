@@ -30,6 +30,7 @@ export const AdminNetworkControlPanel: React.FC = () => {
   const [adjAmount, setAdjAmount] = useState<number>(500);
   const [adjIsCredit, setAdjIsCredit] = useState(true);
   const [adjReason, setAdjReason] = useState('বিশেষ বোনাস এডজাস্টমেন্ট');
+  const [adjNotice, setAdjNotice] = useState<string | null>(null);
 
   const handleSaveConfig = (e: React.FormEvent) => {
     e.preventDefault();
@@ -41,12 +42,13 @@ export const AdminNetworkControlPanel: React.FC = () => {
       withdrawalMinBDT: withdrawalMin,
       withdrawalFeePct: withdrawalFee
     });
+    setAdjNotice('কমিশন ও ম্যাচিং কনফিগারেশন সংরক্ষিত হয়েছে।');
   };
 
   const handleManualAdjSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     manualWalletAdjustment(adjUserId, adjWallet, adjAmount, adjIsCredit, adjReason);
-    alert('ম্যানুয়াল ওয়ালেট এডজাস্টমেন্ট সফল হয়েছে!');
+    setAdjNotice('ম্যানুয়াল ওয়ালেট এডজাস্টমেন্ট সফল হয়েছে!');
   };
 
   return (
@@ -68,6 +70,19 @@ export const AdminNetworkControlPanel: React.FC = () => {
           Super Admin Privileges Required
         </span>
       </div>
+
+      {adjNotice && (
+        <div className="p-3 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-700 rounded-2xl text-xs text-emerald-900 dark:text-emerald-200 flex items-center justify-between">
+          <span className="font-bold">{adjNotice}</span>
+          <button
+            type="button"
+            onClick={() => setAdjNotice(null)}
+            className="text-emerald-700 dark:text-emerald-300 font-bold hover:underline px-2 cursor-pointer"
+          >
+            বন্ধ করুন
+          </button>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         

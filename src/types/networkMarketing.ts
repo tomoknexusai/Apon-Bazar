@@ -111,6 +111,8 @@ export interface MatchingRecord {
   audit_hash?: string;
 }
 
+export type PlacementMethod = 'MANUAL' | 'AUTO_BFS';
+
 export interface NetworkMember {
   id: string;
   internalId?: string; // Immutable internal UUID/key
@@ -151,6 +153,7 @@ export interface NetworkMember {
   placement_id?: string; // Relational alias
   placementLeg: 'left' | 'right';
   position?: 'left' | 'right' | 'LEFT' | 'RIGHT' | 'Root' | string; // Binary Position: LEFT / RIGHT
+  placementMethod?: PlacementMethod; // MANUAL | AUTO_BFS
   leftChildId?: string; // Max 1 Left Child in Binary Tree
   rightChildId?: string; // Max 1 Right Child in Binary Tree
   pv: number; // Personal Volume
@@ -173,6 +176,12 @@ export interface NetworkMember {
   member_type?: string; // Relational alias
   mentorLeader?: string;
   placementLocked?: boolean; // Locked permanently once set
+  placementLevel?: number; // Binary depth level (Root AB-1000000001 = 1)
+  activationStatus?: 'active' | 'inactive' | 'pending';
+  activationDate?: string | null;
+  orderOrPaymentRef?: string | null;
+  rankQualificationStatus?: 'qualified' | 'unqualified' | 'initial';
+  rankAchievedAt?: string | null;
   nodeStatus?: 'blank' | 'registered'; // 'blank' = empty Tree Slot, 'registered' = active member with AB- ID
   leftBlankId?: string; // Tree Slot ID for empty LEFT leg (SLOT-...)
   rightBlankId?: string; // Tree Slot ID for empty RIGHT leg (SLOT-...)
@@ -314,3 +323,100 @@ export interface ReservedSlot {
   leg: 'left' | 'right';
   createdAt: string;
 }
+
+export interface TokenTransaction {
+  id: string;
+  userId: string;
+  customerId?: string;
+  type: 'credit' | 'debit';
+  amount: number;
+  source: 'reward' | 'purchase_bonus' | 'referral_bonus' | 'admin_adjustment' | 'redemption';
+  status: 'completed' | 'pending' | 'reversed';
+  description: string;
+  referenceId?: string;
+  createdAt: string;
+}
+
+export interface WalletLedgerSummary {
+  openingBalance: number;
+  totalCredit: number;
+  totalDebit: number;
+  availableBalance: number;
+  pendingBalance: number;
+}
+
+export interface TokenLedgerSummary {
+  openingBalance: number;
+  totalCredit: number;
+  totalDebit: number;
+  balance: number;
+  transactions: TokenTransaction[];
+}
+
+export interface LegSummaryStats {
+  totalMembers: number;
+  activeMembers: number;
+  inactiveMembers: number;
+  computedSubtreePV: number;
+  recordedLegPV: number;
+  carryForwardPV: number;
+  totalEligiblePV: number;
+}
+
+export interface PlacementSummary {
+  customerId: string;
+  referralCode: string;
+  referralLink: string;
+  sponsorId: string;
+  sponsorName: string;
+  placementParentId: string | null;
+  placementParentName: string | null;
+  placementPosition: 'LEFT' | 'RIGHT' | 'ROOT' | 'UNPLACED';
+  placementLevel: number;
+  registrationTimestamp: string;
+}
+
+export interface CustomerDashboardSummary {
+  customerId: string;
+  userId: string;
+  fullName: string;
+  mobile: string;
+  email: string;
+  accountStatus: 'active' | 'inactive' | 'suspended' | 'pending_verification';
+  networkStatus: 'active' | 'inactive' | 'unplaced';
+  referralCode: string;
+  referralLink: string;
+  sponsorId: string;
+  sponsorName: string;
+  placementParentId: string | null;
+  placementParentName: string | null;
+  placementPosition: 'LEFT' | 'RIGHT' | 'ROOT' | 'UNPLACED';
+  placementLevel: number;
+  registrationTimestamp: string;
+  leftLeg: LegSummaryStats;
+  rightLeg: LegSummaryStats;
+  matchingPV: number;
+  personalPV: number;
+  activationPackage: {
+    packageId: string | null;
+    packageName: string;
+    pv: number;
+    status: 'active' | 'inactive' | 'pending';
+    activationDate: string | null;
+    orderOrPaymentRef: string | null;
+  };
+  earnedRank: {
+    rank: RankLevel;
+    titleBn: string;
+    titleEn: string;
+    qualificationStatus: 'qualified' | 'unqualified' | 'initial';
+    achievedDate: string | null;
+    activeDirectReferrals: number;
+    teamPV: number;
+  };
+  wallets: UserWallets;
+  walletSummary: WalletLedgerSummary;
+  walletTransactions: WalletTransaction[];
+  tokenSummary: TokenLedgerSummary;
+}
+

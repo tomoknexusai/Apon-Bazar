@@ -1,6 +1,6 @@
 /**
  * Vendor & Admin Product Management Form Modal
- * Project: ঘরের বাজার বিডি (Ghorer Bazar BD)
+ * Project: APON BAZAR (আপন বাজার)
  */
 
 import React, { useState } from 'react';
@@ -163,7 +163,7 @@ export const VendorProductFormModal: React.FC<VendorProductFormModalProps> = ({
       categoryName: catObj?.nameBn || 'সাধারণ ক্যাটালগ',
       subCategory,
       brandId,
-      brandName: brandObj?.name || 'TOMSHOPBD',
+      brandName: brandObj?.name || 'APON BAZAR',
       sku,
       barcode,
       images: images.length > 0 ? images : ['https://images.unsplash.com/photo-1587049352846-4a222e784d38?auto=format&fit=crop&q=80&w=800'],

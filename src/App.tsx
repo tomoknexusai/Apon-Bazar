@@ -41,6 +41,7 @@ import { VendorDashboard } from './components/dashboards/VendorDashboard';
 import { OperationsPartnerDashboard } from './components/dashboards/OperationsPartnerDashboard';
 import { DeliveryRiderDashboard } from './components/dashboards/DeliveryRiderDashboard';
 import { ECommerceStorefront } from './components/shop/ECommerceStorefront';
+import { ForcePasswordChangeModal } from './components/auth/ForcePasswordChangeModal';
 
 import { X, Info, CheckCircle2, AlertTriangle, AlertCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -528,18 +529,26 @@ const MainContent: React.FC = () => {
             : 'max-w-7xl p-3 sm:p-6 lg:p-8 space-y-5 sm:space-y-6'
         }`}
       >
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={pageKey}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-          >
-            {renderDashboard()}
-          </motion.div>
-        </AnimatePresence>
+        {isLoggedIn && currentUser?.mustChangePassword ? (
+          <div className="min-h-[60vh] flex items-center justify-center text-sm text-slate-600 dark:text-slate-300">
+            নিরাপত্তা যাচাই সম্পন্ন করতে পাসওয়ার্ড পরিবর্তন করুন...
+          </div>
+        ) : (
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={pageKey}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+            >
+              {renderDashboard()}
+            </motion.div>
+          </AnimatePresence>
+        )}
       </main>
+
+      {isLoggedIn && currentUser?.mustChangePassword && <ForcePasswordChangeModal />}
 
       {/* Footer */}
       <Footer />

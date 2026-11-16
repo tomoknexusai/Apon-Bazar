@@ -1,6 +1,6 @@
 /**
  * Level 2 Local Service Address Database Management Context
- * Project: Apon Somaj / Apon Bazar
+ * Project: APON BAZAR (আপন বাজার)
  * 
  * Provides centralized reactive state and indexing for:
  * - Union / Paurashava Management
@@ -251,7 +251,7 @@ export const LocalAddressDatabaseProvider: React.FC<{ children: React.ReactNode 
       const payload: LocalAddressDBExport = {
         version: '2.0.0',
         exportedAt: new Date().toISOString(),
-        companyName: 'Apon Somaj / Apon Bazar',
+        companyName: 'APON BAZAR',
         unions,
         wards,
         places

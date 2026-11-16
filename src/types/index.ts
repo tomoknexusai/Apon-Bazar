@@ -258,6 +258,8 @@ export interface UserProfile {
   referralId?: string;
   placementId?: string;
   placementLeg?: 'left' | 'right';
+  placementLevel?: number;
+  registeredAt?: string;
   isNetworkActive?: boolean;
   mandatoryAddress?: ServiceAddress;
   shopName?: string;

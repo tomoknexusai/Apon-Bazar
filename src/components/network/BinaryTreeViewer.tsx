@@ -1,12 +1,13 @@
 /**
- * Interactive ID-Wise Isolated Binary Tree Viewer & AI Placement Component
- * Project: আপন বাজার (Apon Bazar)
+ * Interactive ID-Wise Compact Binary Tree Viewer
+ * Project: আপন বাজার (APON BAZAR)
  *
- * Enforces strict server-verified subtree isolation:
- * - Normal Members can ONLY view their own Company ID and downward descendants.
- * - Ancestors above the selected Company ID and sibling branches are NEVER returned or rendered.
- * - Supports unlimited depth expansion, Left & Right Blank Positions, Zoom/Expand/Collapse,
- *   Level Navigation, Back navigation stack, and URL refresh persistence.
+ * Layout & Isolation Rules:
+ * - Selected Company ID is Temporary Root at top-center.
+ * - Default 3-Node Compact Focus Mode displays ONLY Selected Root + direct LEFT & RIGHT.
+ * - Optional Compact Downline toggle shows up to Level 3 (or expanded levels) cleanly on 1366x768 & 1920x1080.
+ * - Strictly NO upline, sponsor, ancestor, or cross-line IDs are returned or rendered.
+ * - Empty positions use SLOT-* markers and NEVER pre-allocate or burn AB- Customer IDs.
  */
 
 import React, { useState, useMemo, useEffect } from 'react';
@@ -14,34 +15,33 @@ import { useAuth } from '../../context/AuthContext';
 import { useNetworkMarketing } from '../../context/NetworkMarketingContext';
 import { formatPV } from '../../lib/ecommerce-data';
 import { COMPANY_MASTER_ROOT_ID, NetworkMember } from '../../types/networkMarketing';
-import { IsolatedSubtreeStats } from '../../lib/binaryBlankPositionEngine';
+import { computeSubtreeLegStats, IsolatedSubtreeStats } from '../../lib/binaryBlankPositionEngine';
 import { CustomerRegistrationModal } from '../auth/CustomerRegistrationModal';
 import { SlotReservationService } from '../../services/SlotReservationService';
 import { PlacementManagementModal } from './PlacementManagementModal';
+import { BinaryTreeLegend } from './BinaryTreeLegend';
 import {
   GitBranch,
   Zap,
-  User,
   RefreshCw,
   ShieldCheck,
   ShieldAlert,
   UserPlus,
   Clock,
-  Sparkles,
   Search,
   ChevronRight,
   ChevronDown,
   ChevronUp,
   Home,
-  Bot,
   ArrowLeft,
   ZoomIn,
   ZoomOut,
   RotateCcw,
   Layers,
-  Lock,
   AlertTriangle,
-  FolderTree
+  FolderTree,
+  Focus,
+  Network
 } from 'lucide-react';
 
 const TREE_URL_PARAM = 'treeCompanyId';
@@ -103,8 +103,10 @@ export const BinaryTreeViewer: React.FC = () => {
     message: string;
   } | null>(null);
 
+  // Default: Compact 3-Node Focus Mode (Selected ID + direct LEFT & RIGHT)
+  const [viewMode, setViewMode] = useState<'focus3' | 'downline'>('focus3');
   const [expandedNodes, setExpandedNodes] = useState<Record<string, boolean>>({});
-  const [selectedLevelFilter, setSelectedLevelFilter] = useState<number | 'all'>('all');
+  const [selectedLevelFilter, setSelectedLevelFilter] = useState<number | 'all'>(3);
   const [zoomLevel, setZoomLevel] = useState<number>(1);
   const [highlightNodeId, setHighlightNodeId] = useState<string | null>(null);
   const [inSubtreeQuery, setInSubtreeQuery] = useState<string>('');
@@ -116,7 +118,7 @@ export const BinaryTreeViewer: React.FC = () => {
     reservedCompanyId?: string;
   } | null>(null);
 
-  const [aiRegistrationOpen, setAiRegistrationOpen] = useState(false);
+  const [newRegistrationOpen, setNewRegistrationOpen] = useState(false);
 
   const [selectedPlacementTarget, setSelectedPlacementTarget] = useState<{
     parentId: string;
@@ -183,7 +185,6 @@ export const BinaryTreeViewer: React.FC = () => {
     setIsLoading(false);
 
     if (!resp.success || !resp.rootId || !resp.nodes || !resp.stats) {
-      // Strictly clear tree if 403 Forbidden (URL tampering / cross-branch attempt)
       if (resp.statusCode === 403) {
         setIsolatedNodes([]);
         setIsolatedStats(null);
@@ -204,8 +205,9 @@ export const BinaryTreeViewer: React.FC = () => {
     setSelectedRootId(resp.rootId);
     setIsolatedNodes(resp.nodes);
     setIsolatedStats(resp.stats);
-    setSelectedLevelFilter('all');
-    setExpandedNodes(computeExpandedForSubtree(resp.nodes, resp.rootId, 'all'));
+    const initialDepth = viewMode === 'focus3' ? 2 : 3;
+    setSelectedLevelFilter(initialDepth);
+    setExpandedNodes(computeExpandedForSubtree(resp.nodes, resp.rootId, initialDepth));
     setHighlightNodeId(null);
     if (options?.resetZoom) {
       setZoomLevel(1);
@@ -222,7 +224,7 @@ export const BinaryTreeViewer: React.FC = () => {
       setSubtreeError({
         statusCode: 403,
         code: 'ACCESS_DENIED',
-        message: 'আপনার অ্যাকাউন্টের জন্য এখনো কোনো Company ID বরাদ্দ হয়নি। আগে নেটওয়ার্ক মেম্বারশিপ সক্রিয় করুন।'
+        message: 'আপনার অ্যাকাউন্টের জন্য এখনো কোনো Company ID বরাদ্দ হয়নি।'
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -231,9 +233,13 @@ export const BinaryTreeViewer: React.FC = () => {
   const activeFocusMember =
     isolatedNodeMap.get(selectedRootId) || isolatedNodes[0] || null;
 
-  // Real-time AI Placement Recommendation scoped to user's allowed root
+  const focusLegStats = useMemo(
+    () => computeSubtreeLegStats(allTreeNodes, activeFocusMember?.id || null),
+    [allTreeNodes, activeFocusMember?.id]
+  );
+
   const aiRecommendation = useMemo(() => {
-    const scopeRoot = activeFocusMember?.id || ownCompanyMemberId || currentMember.id || COMPANY_MASTER_ROOT_ID;
+    const scopeRoot = activeFocusMember?.id || ownCompanyMemberId || currentMember?.id || COMPANY_MASTER_ROOT_ID;
     return SlotReservationService.calculateAIRecommendation(
       scopeRoot,
       allTreeNodes,
@@ -253,7 +259,7 @@ export const BinaryTreeViewer: React.FC = () => {
       setSubtreeError({
         statusCode: 400,
         code: 'INVALID_INPUT',
-        message: 'অনুগ্রহ করে একটি বৈধ Company ID লিখুন।'
+        message: 'অনুগ্রহ করে একটি বৈধ Company ID লিখুন (উদাঃ AB-1000000001, AB-1000000002)।'
       });
       return;
     }
@@ -273,6 +279,16 @@ export const BinaryTreeViewer: React.FC = () => {
     setHistoryStack([]);
     setSearchQuery('');
     openIsolatedSubtree(defaultRootId, { pushHistory: false, resetZoom: true });
+  };
+
+  const handleSwitchViewMode = (mode: 'focus3' | 'downline') => {
+    setViewMode(mode);
+    setZoomLevel(1);
+    if (activeFocusMember) {
+      const targetDepth = mode === 'focus3' ? 2 : 3;
+      setSelectedLevelFilter(targetDepth);
+      setExpandedNodes(computeExpandedForSubtree(isolatedNodes, activeFocusMember.id, targetDepth));
+    }
   };
 
   const handleSelectTreeLevel = (levelVal: number | 'all') => {
@@ -298,6 +314,9 @@ export const BinaryTreeViewer: React.FC = () => {
     );
     if (match) {
       setHighlightNodeId(match.id);
+      if (viewMode === 'focus3') {
+        setViewMode('downline');
+      }
       const nextExp: Record<string, boolean> = { ...expandedNodes, [match.id]: true };
       let curr: NetworkMember | undefined = match;
       const visited = new Set<string>();
@@ -317,13 +336,19 @@ export const BinaryTreeViewer: React.FC = () => {
     }
   };
 
-  // Recursive Unlimited-Level Tree Renderer (reads ONLY from isolatedNodeMap)
+  // Compact Node Renderer
   const renderSubtreeNode = (
     nodeId: string | undefined,
     positionLabel: 'ROOT' | 'LEFT' | 'RIGHT',
     depth: number
   ): React.ReactNode => {
-    if (!nodeId) return null;
+    if (!nodeId) {
+      return (
+        <div className="w-[156px] sm:w-[168px] p-2.5 rounded-xl border border-dashed border-neutral-300 dark:border-neutral-700 bg-neutral-50/70 dark:bg-neutral-900/50 text-center text-[11px] text-neutral-500">
+          Empty {positionLabel}
+        </div>
+      );
+    }
     const node = isolatedNodeMap.get(nodeId);
     if (!node) return null;
 
@@ -337,11 +362,11 @@ export const BinaryTreeViewer: React.FC = () => {
 
       if (isReserved) {
         return (
-          <div className="w-56 p-3.5 bg-amber-50/80 dark:bg-amber-950/40 border-2 border-dashed border-amber-400 rounded-2xl text-center space-y-1.5">
-            <span className="bg-amber-500 text-white font-bold text-[9px] px-2 py-0.5 rounded-full uppercase inline-flex items-center gap-1">
-              <Clock className="w-3 h-3" /> সংরক্ষিত স্লট
+          <div className="w-[156px] sm:w-[168px] p-2.5 bg-amber-50/80 dark:bg-amber-950/40 border-2 border-dashed border-amber-400 rounded-xl text-center space-y-1">
+            <span className="bg-amber-500 text-white font-bold text-[9px] px-1.5 py-0.5 rounded uppercase inline-flex items-center gap-1">
+              <Clock className="w-2.5 h-2.5" /> Reserved
             </span>
-            <h5 className="font-bold text-xs text-amber-950 dark:text-amber-200">{isReserved.customerName}</h5>
+            <h5 className="font-bold text-[11px] text-amber-950 dark:text-amber-200 truncate">{isReserved.customerName}</h5>
             <p className="text-[10px] font-mono text-amber-700 dark:text-amber-400">{isReserved.customerMobile}</p>
           </div>
         );
@@ -358,38 +383,34 @@ export const BinaryTreeViewer: React.FC = () => {
               reservedCompanyId: node.id
             })
           }
-          className={`w-56 rounded-2xl p-3.5 border-2 border-dashed text-left transition-all cursor-pointer shadow-xs hover:shadow-md hover:scale-[1.02] ${
+          className={`w-[156px] sm:w-[168px] rounded-xl p-2.5 border-2 border-dashed text-left transition-all cursor-pointer hover:shadow-md ${
             highlightNodeId === node.id
-              ? 'ring-4 ring-amber-400 border-amber-500 bg-amber-50'
+              ? 'ring-2 ring-amber-400 border-amber-500 bg-amber-50'
               : isLeftBlank
-              ? 'border-blue-400/80 dark:border-blue-700 bg-blue-50/60 dark:bg-blue-950/25'
-              : 'border-teal-400/80 dark:border-teal-700 bg-teal-50/60 dark:bg-teal-950/25'
+              ? 'border-blue-300 dark:border-blue-700 bg-blue-50/40 dark:bg-blue-950/20 hover:border-blue-500'
+              : 'border-teal-300 dark:border-teal-700 bg-teal-50/40 dark:bg-teal-950/20 hover:border-teal-500'
           }`}
         >
           <div className="flex items-center justify-between gap-1 mb-1">
             <span
-              className={`text-[10px] font-black px-2 py-0.5 rounded-md uppercase ${
+              className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase ${
                 isLeftBlank ? 'bg-blue-600 text-white' : 'bg-teal-600 text-white'
               }`}
             >
-              {isLeftBlank ? 'LEFT BLANK' : 'RIGHT BLANK'}
+              EMPTY {isLeftBlank ? 'LEFT' : 'RIGHT'}
             </span>
-            <span className="text-[10px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded inline-flex items-center gap-0.5">
-              <Lock className="w-2.5 h-2.5" /> Reserved
-            </span>
+            <span className="text-[9px] font-semibold text-neutral-500">No ID Burn</span>
           </div>
-          <div className="font-mono font-black text-sm text-neutral-900 dark:text-white">[{node.id}]</div>
-          <div className="text-[10px] text-neutral-500 mt-0.5 flex items-center justify-between">
-            <span>Status: <strong>BLANK</strong></span>
-            <span>Parent: <strong className="font-mono">{parentId}</strong></span>
+          <div className="font-mono text-[10px] text-neutral-600 dark:text-neutral-400 truncate">
+            Parent: <strong className="text-neutral-900 dark:text-neutral-200">{parentId}</strong>
           </div>
           <div
-            className={`mt-2 py-1 px-2 rounded-xl text-[11px] font-bold text-white flex items-center justify-center gap-1 ${
+            className={`mt-2 py-1 px-2 rounded-lg text-[10px] font-bold text-white flex items-center justify-center gap-1 ${
               isLeftBlank ? 'bg-blue-600' : 'bg-teal-600'
             }`}
           >
-            <UserPlus className="w-3.5 h-3.5" />
-            <span>Click to Register</span>
+            <UserPlus className="w-3 h-3" />
+            <span>Register</span>
           </div>
         </button>
       );
@@ -397,25 +418,35 @@ export const BinaryTreeViewer: React.FC = () => {
 
     const member = node;
     const isTemporaryRoot = member.id === selectedRootId;
-    const isExpanded = !!expandedNodes[member.id];
+    const isCompanyAccount = /^AB-100000000[1-7]$/.test(member.id);
+    const isExpanded = viewMode === 'focus3' ? depth === 0 : !!expandedNodes[member.id];
     const leftTargetId = member.leftChildId || member.leftBlankId;
     const rightTargetId = member.rightChildId || member.rightBlankId;
-    const hasChildren = !!leftTargetId || !!rightTargetId;
+    const hasChildren = (viewMode === 'focus3' ? depth === 0 : true) && (!!leftTargetId || !!rightTargetId);
 
     return (
       <div className="flex flex-col items-center">
         <div
-          className={`relative w-60 p-4 rounded-2xl border shadow-sm transition-all ${
+          onClick={() => {
+            if (!isTemporaryRoot) {
+              openIsolatedSubtree(member.id, { pushHistory: true, resetZoom: true });
+            }
+          }}
+          className={`relative w-[162px] sm:w-[176px] p-2.5 rounded-xl border transition-all ${
+            !isTemporaryRoot ? 'cursor-pointer hover:border-emerald-500 hover:shadow-md' : ''
+          } ${
             highlightNodeId === member.id
-              ? 'ring-4 ring-amber-400 border-amber-500 bg-amber-50/90 dark:bg-amber-950/90'
+              ? 'ring-2 ring-amber-400 border-amber-500 bg-amber-50/90 dark:bg-amber-950/90'
               : isTemporaryRoot
-              ? 'bg-gradient-to-b from-emerald-50 to-white dark:from-emerald-950/40 dark:to-neutral-900 border-2 border-emerald-500 shadow-md'
-              : 'bg-white dark:bg-neutral-900 border-neutral-200 dark:border-neutral-800 hover:border-emerald-400'
+              ? 'bg-emerald-50/70 dark:bg-emerald-950/40 border-2 border-emerald-600 shadow-sm'
+              : isCompanyAccount
+              ? 'bg-amber-50/40 dark:bg-neutral-900 border-amber-300 dark:border-amber-800'
+              : 'bg-white dark:bg-neutral-900 border-neutral-200 dark:border-neutral-800'
           }`}
         >
-          <div className="flex items-center justify-between gap-1 mb-2">
+          <div className="flex items-center justify-between gap-1 mb-1">
             <span
-              className={`text-[10px] font-black px-2 py-0.5 rounded-md uppercase ${
+              className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase ${
                 isTemporaryRoot
                   ? 'bg-emerald-600 text-white'
                   : positionLabel === 'LEFT'
@@ -423,72 +454,79 @@ export const BinaryTreeViewer: React.FC = () => {
                   : 'bg-teal-100 text-teal-800 dark:bg-teal-950 dark:text-teal-300'
               }`}
             >
-              {isTemporaryRoot ? (member.id === ownCompanyMemberId ? 'ROOT (YOU)' : 'SELECTED ROOT') : positionLabel}
+              {isTemporaryRoot ? (member.id === ownCompanyMemberId ? 'YOU / ROOT' : 'SELECTED ROOT') : positionLabel}
             </span>
-            <span className="font-mono font-black text-xs text-neutral-900 dark:text-white">
-              {member.id}
-            </span>
+            <span
+              className={`w-2 h-2 rounded-full shrink-0 ${
+                member.active ? 'bg-emerald-500' : 'bg-rose-500'
+              }`}
+              title={member.active ? 'Active' : 'Inactive'}
+            />
           </div>
 
-          <h4 className="font-black text-sm text-neutral-900 dark:text-white truncate" title={member.fullName}>
+          <div className="font-mono tabular-nums font-black text-[11px] text-neutral-900 dark:text-white truncate">
+            {member.id}
+          </div>
+          <h4 className="font-bold text-xs text-neutral-800 dark:text-neutral-200 truncate" title={member.fullName}>
             {member.fullName}
           </h4>
-          <p className="text-[10px] text-emerald-600 font-semibold truncate mb-2">
-            Personal PV: {formatPV(member.pv)} PV
-          </p>
 
-          <div className="grid grid-cols-2 gap-1.5 p-2 bg-neutral-50 dark:bg-neutral-800/60 rounded-xl text-[10px] font-mono mb-2">
-            <div className="text-blue-700 dark:text-blue-300 font-bold">
-              L: {formatPV(member.leftPV)} PV
+          <div className="grid grid-cols-2 gap-1 px-1.5 py-1 bg-neutral-50 dark:bg-neutral-800/70 rounded-lg text-[10px] font-mono tabular-nums mt-1.5">
+            <div className="text-blue-700 dark:text-blue-300 font-bold truncate">
+              L: {formatPV(member.leftPV)}
             </div>
-            <div className="text-teal-700 dark:text-teal-300 font-bold">
-              R: {formatPV(member.rightPV)} PV
+            <div className="text-teal-700 dark:text-teal-300 font-bold truncate text-right">
+              R: {formatPV(member.rightPV)}
             </div>
           </div>
 
-          <div className="flex items-center justify-between text-[11px] pt-1 border-t border-neutral-100 dark:border-neutral-800">
+          <div className="flex items-center justify-between text-[10px] pt-1.5 mt-1.5 border-t border-neutral-100 dark:border-neutral-800">
             <button
               type="button"
-              onClick={() => openIsolatedSubtree(member.id, { pushHistory: true, resetZoom: true })}
+              onClick={(e) => {
+                e.stopPropagation();
+                openIsolatedSubtree(member.id, { pushHistory: true, resetZoom: true });
+              }}
               className="text-emerald-600 hover:text-emerald-700 font-bold inline-flex items-center gap-0.5 cursor-pointer"
             >
-              <span>ট্রি খুলুন</span>
+              <span>Open</span>
               <ChevronRight className="w-3 h-3" />
             </button>
-            <span className="text-[10px] text-neutral-400 font-mono">
-              Matched: {formatPV(member.totalMatchedPV)}
+            <span className="text-[9px] text-neutral-500 font-mono tabular-nums">
+              PV: {formatPV(member.pv)}
             </span>
           </div>
 
-          {hasChildren && (
+          {viewMode === 'downline' && hasChildren && (
             <button
               type="button"
-              onClick={() =>
+              onClick={(e) => {
+                e.stopPropagation();
                 setExpandedNodes((prev) => ({
                   ...prev,
                   [member.id]: !prev[member.id]
-                }))
-              }
-              className="absolute -bottom-3 left-1/2 -translate-x-1/2 w-6 h-6 rounded-full bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 flex items-center justify-center text-neutral-700 dark:text-neutral-300 hover:bg-emerald-50 shadow-xs cursor-pointer z-10"
+                }));
+              }}
+              className="absolute -bottom-2.5 left-1/2 -translate-x-1/2 w-5 h-5 rounded-full bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 flex items-center justify-center text-neutral-700 dark:text-neutral-300 hover:bg-emerald-50 shadow-xs cursor-pointer z-10"
               title={isExpanded ? 'Collapse' : 'Expand'}
             >
-              {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              {isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
             </button>
           )}
         </div>
 
         {hasChildren && isExpanded && (
-          <div className="flex flex-col items-center mt-3">
-            <div className="w-0.5 h-6 bg-neutral-300 dark:bg-neutral-700" />
+          <div className="flex flex-col items-center mt-1">
+            <div className="w-0.5 h-3 bg-neutral-300 dark:bg-neutral-700" />
             <div className="flex items-start">
-              <div className="flex flex-col items-center px-3 relative">
-                <div className="absolute top-0 right-1/2 w-full h-0.5 bg-neutral-300 dark:bg-neutral-700 translate-x-1/2" />
-                <div className="w-0.5 h-6 bg-neutral-300 dark:bg-neutral-700" />
+              <div className="flex flex-col items-center px-2 relative">
+                <div className="absolute top-0 left-1/2 right-0 h-0.5 bg-neutral-300 dark:bg-neutral-700" />
+                <div className="w-0.5 h-3 bg-neutral-300 dark:bg-neutral-700" />
                 {renderSubtreeNode(leftTargetId, 'LEFT', depth + 1)}
               </div>
-              <div className="flex flex-col items-center px-3 relative">
-                <div className="absolute top-0 left-1/2 w-full h-0.5 bg-neutral-300 dark:bg-neutral-700 -translate-x-1/2" />
-                <div className="w-0.5 h-6 bg-neutral-300 dark:bg-neutral-700" />
+              <div className="flex flex-col items-center px-2 relative">
+                <div className="absolute top-0 left-0 right-1/2 h-0.5 bg-neutral-300 dark:bg-neutral-700" />
+                <div className="w-0.5 h-3 bg-neutral-300 dark:bg-neutral-700" />
                 {renderSubtreeNode(rightTargetId, 'RIGHT', depth + 1)}
               </div>
             </div>
@@ -499,66 +537,46 @@ export const BinaryTreeViewer: React.FC = () => {
   };
 
   return (
-    <div className="space-y-6 text-neutral-900 dark:text-neutral-100">
-      {/* Banner */}
-      <div className="bg-gradient-to-r from-teal-900 via-emerald-900 to-teal-950 text-white rounded-3xl p-6 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border border-teal-700/40">
+    <div className="space-y-4 text-neutral-900 dark:text-neutral-100">
+      {/* Compact Header Banner */}
+      <div className="bg-gradient-to-r from-teal-900 via-emerald-900 to-teal-950 text-white rounded-2xl p-4 sm:p-5 shadow-md flex flex-col md:flex-row items-start md:items-center justify-between gap-3 border border-teal-700/40">
         <div>
           <div className="flex items-center gap-2">
-            <GitBranch className="w-6 h-6 text-emerald-300" />
-            <h3 className="font-black text-xl">বাইনারি নেটওয়ার্ক ট্রি ও ID-ভিত্তিক সাব-ট্রি ভিউয়ার</h3>
+            <GitBranch className="w-5 h-5 text-emerald-300" />
+            <h3 className="font-black text-base sm:text-lg">ID-ভিত্তিক কম্প্যাক্ট বাইনারি নেটওয়ার্ক ট্রি</h3>
           </div>
-          <p className="text-xs text-teal-100/80 mt-1">
-            অনুমোদিত Company ID অনুযায়ী বিচ্ছিন্ন বাইনারি নেটওয়ার্ক, প্রি-রিজার্ভড Left/Right Blank Position ও রিয়েল-টাইম PV বিশ্লেষণ
+          <p className="text-[11px] text-teal-100/80 mt-0.5">
+            শুধুমাত্র নির্বাচিত Company ID এবং তার নিজস্ব ডাউনলাইন শাখা (কোনো আপলাইন বা ক্রস-লাইন দেখানো হয় না)
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={handleRunMatching}
-          className="px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-neutral-950 font-black rounded-2xl text-xs shadow-lg flex items-center gap-2 transition-transform hover:scale-105 shrink-0 cursor-pointer"
-        >
-          <Zap className="w-4 h-4 fill-neutral-950" />
-          <span>ডেইলি বাইনারি ম্যাচিং রান করুন</span>
-        </button>
-      </div>
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => setNewRegistrationOpen(true)}
+            className="px-3.5 py-2 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+          >
+            <UserPlus className="w-3.5 h-3.5" />
+            <span>নতুন মেম্বার নিবন্ধন (10-Field)</span>
+          </button>
 
-      {/* AI Placement Engine Recommendation Card */}
-      <div className="bg-gradient-to-r from-teal-500/10 via-emerald-500/10 to-teal-500/10 dark:from-teal-950/40 dark:via-emerald-950/40 dark:to-teal-950/40 border border-teal-200 dark:border-teal-800 rounded-3xl p-5 shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-        <div className="space-y-1.5">
-          <div className="flex items-center gap-2 text-teal-800 dark:text-teal-300 font-black text-sm">
-            <Bot className="w-5 h-5 text-teal-600" />
-            <span>AI Placement Recommendation</span>
-            <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200 font-mono font-bold">
-              Recommended Slot: Available
-            </span>
-          </div>
-          <div className="flex flex-wrap items-center gap-3 sm:gap-6 text-xs font-mono pt-1 text-neutral-700 dark:text-neutral-300">
-            <div>Refer ID: <strong className="text-neutral-900 dark:text-white font-bold">{aiRecommendation.sponsorId}</strong></div>
-            <div>Placement ID: <strong className="text-neutral-900 dark:text-white font-bold">{aiRecommendation.placementId}</strong></div>
-            <div>Position: <strong className="text-emerald-600 uppercase font-bold">{aiRecommendation.position}</strong></div>
-            <div className="text-neutral-500 text-[11px] font-sans">({aiRecommendation.placementName})</div>
-          </div>
-          <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
-            {aiRecommendation.reasonText}
-          </p>
+          <button
+            type="button"
+            onClick={handleRunMatching}
+            className="px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-neutral-950 font-black rounded-xl text-xs flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+          >
+            <Zap className="w-3.5 h-3.5 fill-neutral-950" />
+            <span>ডেইলি ম্যাচিং</span>
+          </button>
         </div>
-
-        <button
-          type="button"
-          onClick={() => setAiRegistrationOpen(true)}
-          className="px-5 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-2xl text-xs shadow-md flex items-center gap-2 shrink-0 transition-all cursor-pointer hover:scale-102"
-        >
-          <Sparkles className="w-4 h-4 text-amber-300" />
-          <span>কাস্টমার নিবন্ধন ও স্লট রিজার্ভ করুন (AI Engine)</span>
-        </button>
       </div>
 
-      {/* ID-Wise Tree Header: Search Box + Required Counters + Back / Home Controls */}
-      <div className="bg-white dark:bg-neutral-900 p-4 rounded-2xl border border-neutral-200 dark:border-neutral-800 shadow-xs space-y-3">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+      {/* ID Search, View Mode Toggle & Counters */}
+      <div className="bg-white dark:bg-neutral-900 p-3.5 rounded-2xl border border-neutral-200 dark:border-neutral-800 space-y-2.5">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-2.5">
           <form onSubmit={handleSearch} className="flex flex-wrap items-center gap-2 flex-1">
-            <div className="relative flex-1 min-w-[230px] max-w-md">
-              <Search className="w-4 h-4 text-emerald-600 absolute left-3 top-1/2 -translate-y-1/2" />
+            <div className="relative flex-1 min-w-[200px] max-w-xs">
+              <Search className="w-3.5 h-3.5 text-emerald-600 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
                 aria-label="Enter Company ID to View Network"
@@ -567,14 +585,14 @@ export const BinaryTreeViewer: React.FC = () => {
                   setSearchQuery(e.target.value);
                   if (subtreeError) setSubtreeError(null);
                 }}
-                placeholder="Enter Company ID to View Network"
-                className="w-full pl-9 pr-3 py-2 bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-xl text-xs font-mono font-bold text-neutral-900 dark:text-white"
+                placeholder="উদাঃ AB-1000000002"
+                className="w-full pl-8 pr-3 py-1.5 bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-xl text-xs font-mono font-bold text-neutral-900 dark:text-white"
               />
             </div>
             <button
               type="submit"
               disabled={isLoading}
-              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer"
+              className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
             >
               {isLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <FolderTree className="w-3.5 h-3.5" />}
               <span>Open Network</span>
@@ -584,7 +602,7 @@ export const BinaryTreeViewer: React.FC = () => {
               <button
                 type="button"
                 onClick={handleGoBack}
-                className="px-3 py-2 bg-neutral-100 hover:bg-neutral-200 dark:bg-neutral-800 text-neutral-800 dark:text-neutral-200 rounded-xl text-xs font-bold inline-flex items-center gap-1 cursor-pointer border border-neutral-300 dark:border-neutral-700"
+                className="px-2.5 py-1.5 bg-neutral-100 hover:bg-neutral-200 dark:bg-neutral-800 rounded-xl text-xs font-bold inline-flex items-center gap-1 cursor-pointer border border-neutral-300 dark:border-neutral-700"
               >
                 <ArrowLeft className="w-3.5 h-3.5" />
                 <span>Back ({historyStack[historyStack.length - 1]})</span>
@@ -595,31 +613,31 @@ export const BinaryTreeViewer: React.FC = () => {
               <button
                 type="button"
                 onClick={handleGoHomeNode}
-                className="px-3 py-2 bg-emerald-50 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 hover:bg-emerald-100 rounded-xl text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer border border-emerald-200 dark:border-emerald-800"
+                className="px-2.5 py-1.5 bg-emerald-50 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 rounded-xl text-xs font-bold inline-flex items-center gap-1 cursor-pointer border border-emerald-200 dark:border-emerald-800"
               >
                 <Home className="w-3.5 h-3.5" />
-                <span>আমার হোম ({defaultRootId})</span>
+                <span>হোম ({defaultRootId})</span>
               </button>
             )}
           </form>
 
-          {/* Header Stats */}
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <div className="px-3 py-1.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800">
-              <span className="text-neutral-500">Selected Company ID: </span>
-              <strong className="font-mono font-black text-emerald-700 dark:text-emerald-300">
+          {/* Compact Header Stats */}
+          <div className="flex flex-wrap items-center gap-2 text-[11px]">
+            <div className="px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800">
+              <span className="text-neutral-500">Root: </span>
+              <strong className="font-mono tabular-nums font-black text-emerald-700 dark:text-emerald-300">
                 {isolatedStats?.selectedCompanyId || selectedRootId || 'N/A'}
               </strong>
             </div>
-            <div className="px-3 py-1.5 rounded-xl bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800">
-              <span className="text-neutral-500">Network Members: </span>
-              <strong className="font-mono font-black text-blue-700 dark:text-blue-300">
+            <div className="px-2.5 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800">
+              <span className="text-neutral-500">Members: </span>
+              <strong className="font-mono tabular-nums font-black text-blue-700 dark:text-blue-300">
                 {isolatedStats?.networkMembers ?? 0}
               </strong>
             </div>
-            <div className="px-3 py-1.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800">
-              <span className="text-neutral-500">Tree Levels: </span>
-              <strong className="font-mono font-black text-indigo-700 dark:text-indigo-300">
+            <div className="px-2.5 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800">
+              <span className="text-neutral-500">Levels: </span>
+              <strong className="font-mono tabular-nums font-black text-indigo-700 dark:text-indigo-300">
                 {isolatedStats?.treeLevels ?? 0}
               </strong>
             </div>
@@ -630,7 +648,7 @@ export const BinaryTreeViewer: React.FC = () => {
         {subtreeError && (
           <div
             role="alert"
-            className={`p-3.5 rounded-xl border text-xs flex items-center justify-between gap-3 ${
+            className={`p-3 rounded-xl border text-xs flex items-center justify-between gap-3 ${
               subtreeError.statusCode === 403
                 ? 'bg-red-50 dark:bg-red-950/50 border-red-300 dark:border-red-800 text-red-900 dark:text-red-200'
                 : 'bg-amber-50 dark:bg-amber-950/50 border-amber-300 dark:border-amber-800 text-amber-950 dark:text-amber-200'
@@ -650,196 +668,214 @@ export const BinaryTreeViewer: React.FC = () => {
                 onClick={handleGoHomeNode}
                 className="px-3 py-1 bg-red-600 text-white font-bold rounded-lg text-[11px] shrink-0 cursor-pointer"
               >
-                Return to My ID ({defaultRootId})
+                Return to {defaultRootId}
               </button>
             )}
           </div>
         )}
 
-        {/* Toolbar: In-subtree Search, Level Selector, Zoom & Expand/Collapse */}
+        {/* Compact Toolbar: 3-Node Focus vs Downline + Search + Level + Zoom */}
         {activeFocusMember && (
           <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-neutral-100 dark:border-neutral-800 text-xs">
-            <form onSubmit={handleFindInSubtree} className="flex items-center gap-1.5">
-              <input
-                type="text"
-                value={inSubtreeQuery}
-                onChange={(e) => setInSubtreeQuery(e.target.value)}
-                placeholder="এই ট্রির ভেতরে খুঁজুন..."
-                className="px-3 py-1.5 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800 text-xs w-44"
-              />
+            <div className="flex items-center gap-1.5">
               <button
-                type="submit"
-                className="px-3 py-1.5 bg-neutral-800 text-white rounded-xl font-bold cursor-pointer"
+                type="button"
+                onClick={() => handleSwitchViewMode('focus3')}
+                className={`px-2.5 py-1.5 rounded-xl font-bold inline-flex items-center gap-1 cursor-pointer border ${
+                  viewMode === 'focus3'
+                    ? 'bg-emerald-600 text-white border-emerald-600'
+                    : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 border-neutral-300 dark:border-neutral-700'
+                }`}
               >
-                Highlight
+                <Focus className="w-3.5 h-3.5" />
+                <span>3-Node Focus (Selected + L/R)</span>
               </button>
-            </form>
+              <button
+                type="button"
+                onClick={() => handleSwitchViewMode('downline')}
+                className={`px-2.5 py-1.5 rounded-xl font-bold inline-flex items-center gap-1 cursor-pointer border ${
+                  viewMode === 'downline'
+                    ? 'bg-emerald-600 text-white border-emerald-600'
+                    : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 border-neutral-300 dark:border-neutral-700'
+                }`}
+              >
+                <Network className="w-3.5 h-3.5" />
+                <span>Full Downline</span>
+              </button>
+            </div>
 
             <div className="flex items-center gap-2 flex-wrap">
-              <div className="flex items-center gap-1.5">
-                <Layers className="w-3.5 h-3.5 text-emerald-600" />
-                <select
-                  aria-label="Member Tree Level View"
-                  value={selectedLevelFilter === 'all' ? 'all' : String(selectedLevelFilter)}
-                  onChange={(e) =>
-                    handleSelectTreeLevel(e.target.value === 'all' ? 'all' : Number(e.target.value))
-                  }
-                  className="bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-xl px-2.5 py-1.5 text-xs font-bold"
+              <form onSubmit={handleFindInSubtree} className="flex items-center gap-1">
+                <input
+                  type="text"
+                  value={inSubtreeQuery}
+                  onChange={(e) => setInSubtreeQuery(e.target.value)}
+                  placeholder="ট্রিতে খুঁজুন..."
+                  className="px-2.5 py-1 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800 text-xs w-36"
+                />
+                <button
+                  type="submit"
+                  className="px-2.5 py-1 bg-neutral-800 text-white rounded-lg font-bold text-[11px] cursor-pointer"
                 >
-                  <option value="all">All Levels ({isolatedStats?.treeLevels || 1})</option>
-                  {Array.from({ length: Math.max(1, isolatedStats?.treeLevels || 1) }, (_, i) => i + 1).map(
-                    (lvl) => (
-                      <option key={lvl} value={String(lvl)}>
-                        Up to Level {lvl}
-                      </option>
-                    )
-                  )}
-                </select>
-              </div>
+                  Find
+                </button>
+              </form>
 
-              <div className="flex items-center bg-neutral-100 dark:bg-neutral-800 rounded-xl p-1 border border-neutral-200 dark:border-neutral-700">
-                <button
-                  type="button"
-                  onClick={() => setZoomLevel((z) => Math.min(z + 0.15, 2))}
-                  className="p-1 hover:bg-white dark:hover:bg-neutral-700 rounded-lg cursor-pointer"
-                  title="Zoom In"
-                >
-                  <ZoomIn className="w-3.5 h-3.5" />
-                </button>
-                <span className="text-[11px] font-mono font-bold px-2">{Math.round(zoomLevel * 100)}%</span>
-                <button
-                  type="button"
-                  onClick={() => setZoomLevel((z) => Math.max(z - 0.15, 0.45))}
-                  className="p-1 hover:bg-white dark:hover:bg-neutral-700 rounded-lg cursor-pointer"
-                  title="Zoom Out"
-                >
-                  <ZoomOut className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setZoomLevel(1)}
-                  className="p-1 hover:bg-white dark:hover:bg-neutral-700 rounded-lg cursor-pointer"
-                  title="Reset Zoom"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                </button>
-              </div>
+              {viewMode === 'downline' && (
+                <>
+                  <div className="flex items-center gap-1">
+                    <Layers className="w-3.5 h-3.5 text-emerald-600" />
+                    <select
+                      aria-label="Member Tree Level View"
+                      value={selectedLevelFilter === 'all' ? 'all' : String(selectedLevelFilter)}
+                      onChange={(e) =>
+                        handleSelectTreeLevel(e.target.value === 'all' ? 'all' : Number(e.target.value))
+                      }
+                      className="bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg px-2 py-1 text-xs font-bold"
+                    >
+                      <option value="all">All Levels ({isolatedStats?.treeLevels || 1})</option>
+                      {Array.from({ length: Math.max(1, isolatedStats?.treeLevels || 1) }, (_, i) => i + 1).map(
+                        (lvl) => (
+                          <option key={lvl} value={String(lvl)}>
+                            Level {lvl}
+                          </option>
+                        )
+                      )}
+                    </select>
+                  </div>
 
-              <button
-                type="button"
-                onClick={() => handleSelectTreeLevel('all')}
-                className="px-2.5 py-1.5 bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-xl font-semibold cursor-pointer"
-              >
-                Expand All
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setSelectedLevelFilter(1);
-                  setExpandedNodes({});
-                }}
-                className="px-2.5 py-1.5 bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-xl font-semibold cursor-pointer"
-              >
-                Collapse All
-              </button>
+                  <div className="flex items-center bg-neutral-100 dark:bg-neutral-800 rounded-lg p-0.5 border border-neutral-200 dark:border-neutral-700">
+                    <button
+                      type="button"
+                      onClick={() => setZoomLevel((z) => Math.min(z + 0.15, 1.8))}
+                      className="p-1 hover:bg-white dark:hover:bg-neutral-700 rounded cursor-pointer"
+                      title="Zoom In"
+                    >
+                      <ZoomIn className="w-3.5 h-3.5" />
+                    </button>
+                    <span className="text-[10px] font-mono font-bold px-1.5">{Math.round(zoomLevel * 100)}%</span>
+                    <button
+                      type="button"
+                      onClick={() => setZoomLevel((z) => Math.max(z - 0.15, 0.5))}
+                      className="p-1 hover:bg-white dark:hover:bg-neutral-700 rounded cursor-pointer"
+                      title="Zoom Out"
+                    >
+                      <ZoomOut className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setZoomLevel(1)}
+                      className="p-1 hover:bg-white dark:hover:bg-neutral-700 rounded cursor-pointer"
+                      title="Reset Zoom"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         )}
       </div>
 
       {matchingResult && (
-        <div className="p-4 bg-amber-50 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-700 rounded-2xl text-xs text-amber-900 dark:text-amber-200 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <ShieldCheck className="w-5 h-5 text-amber-600" />
-            <span className="font-bold">
-              ম্যাচিং সম্পন্ন! মোট {formatPV(matchingResult.matchedPV)} PV ম্যাচিং করা হয়েছে। আনুমানিক ইনস্ট্যান্ট পে-আউট: ৳ {(matchingResult.totalPayoutBDT ?? 0).toLocaleString()}
+        <div className="p-3 bg-amber-50 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-700 rounded-xl text-xs text-amber-900 dark:text-amber-200 flex items-center justify-between">
+          <div className="flex items-center gap-2 font-bold">
+            <ShieldCheck className="w-4 h-4 text-amber-600" />
+            <span>
+              ম্যাচিং সম্পন্ন! মোট {formatPV(matchingResult.matchedPV)} PV ম্যাচিং (৳ {(matchingResult.totalPayoutBDT ?? 0).toLocaleString()})
             </span>
           </div>
           <button
             type="button"
             onClick={() => setMatchingResult(null)}
-            className="text-[10px] underline font-semibold cursor-pointer"
+            className="text-[11px] underline font-semibold cursor-pointer"
           >
             বন্ধ করুন
           </button>
         </div>
       )}
 
-      {/* Group Volume Metrics for Isolated Temporary Root */}
-      {activeFocusMember && (
-        <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 text-xs">
-          <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-4 rounded-2xl shadow-xs space-y-1">
-            <span className="text-neutral-500 text-[11px] font-semibold block">বাম লেগ GV (Left Volume):</span>
-            <p className="text-2xl font-black text-emerald-600 font-mono">
-              {formatPV(activeFocusMember.leftPV)} PV
-            </p>
-            <span className="text-[10px] text-neutral-400 block">ক্যারী ফরওয়ার্ড: {formatPV(activeFocusMember.leftCarryForward)} PV</span>
-          </div>
+      {/* Compact Legend Component */}
+      <BinaryTreeLegend compact={true} />
 
-          <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-4 rounded-2xl shadow-xs space-y-1">
-            <span className="text-neutral-500 text-[11px] font-semibold block">ডান লেগ GV (Right Volume):</span>
-            <p className="text-2xl font-black text-teal-600 font-mono">
-              {formatPV(activeFocusMember.rightPV)} PV
-            </p>
-            <span className="text-[10px] text-neutral-400 block">ক্যারী ফরওয়ার্ড: {formatPV(activeFocusMember.rightCarryForward)} PV</span>
-          </div>
-
-          <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-4 rounded-2xl shadow-xs space-y-1">
-            <span className="text-neutral-500 text-[11px] font-semibold block">সর্বমোট ম্যাচিং PV:</span>
-            <p className="text-2xl font-black text-amber-600 font-mono">
-              {formatPV(activeFocusMember.totalMatchedPV)} PV
-            </p>
-            <span className="text-[10px] text-neutral-400 block">ম্যাচিং রেট: ৳ ১০ / PV</span>
-          </div>
-
-          <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-4 rounded-2xl shadow-xs space-y-1">
-            <span className="text-neutral-500 text-[11px] font-semibold block">আইসোলেটেড রুট (Isolated Root):</span>
-            <p className="text-sm font-bold text-emerald-700 dark:text-emerald-400 font-mono">
-              {activeFocusMember.id}
-            </p>
-            <span className="text-[10px] text-neutral-400 block truncate">{activeFocusMember.fullName}</span>
-          </div>
-        </div>
-      )}
-
-      {/* Visual Unlimited-Depth Isolated Binary Tree Container */}
-      <div className="p-6 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-3xl shadow-xs overflow-x-auto min-h-[420px] flex justify-center">
+      {/* Compact Binary Tree Canvas (Fits cleanly on 1366x768 & 1920x1080 without forced scroll) */}
+      <div className="p-4 sm:p-5 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl overflow-x-auto min-h-[340px] flex justify-center">
         {activeFocusMember ? (
           <div
             style={{
-              transform: `scale(${zoomLevel})`,
+              transform: viewMode === 'downline' ? `scale(${zoomLevel})` : undefined,
               transformOrigin: 'top center'
             }}
-            className="inline-block py-4"
+            className="inline-block py-2"
           >
             {renderSubtreeNode(activeFocusMember.id, 'ROOT', 0)}
           </div>
         ) : (
           <div className="m-auto text-center max-w-md p-6 space-y-2">
-            <ShieldAlert className="w-10 h-10 text-red-500 mx-auto" />
+            <ShieldAlert className="w-9 h-9 text-red-500 mx-auto" />
             <h4 className="font-bold text-sm text-neutral-900 dark:text-white">
               {subtreeError?.statusCode === 403 ? 'Access Denied' : 'নেটওয়ার্ক ট্রি পাওয়া যায়নি'}
             </h4>
             <p className="text-xs text-neutral-500 dark:text-neutral-400">
-              {subtreeError?.message || 'বৈধ Company ID দিয়ে চেষ্টা করুন।'}
+              {subtreeError?.message || 'বৈধ Company ID দিয়ে চেষ্টা করুন (উদাঃ AB-1000000001)।'}
             </p>
           </div>
         )}
       </div>
 
-      {/* Binary Tree Customer Slot Reservation Modal - EXACT SAME SHARED FORM */}
+      {/* Compact PV Metrics Strip Below Tree */}
+      {activeFocusMember && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+          <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-3 rounded-xl">
+            <span className="text-neutral-500 text-[10px] font-semibold block">Left Team GV & Count</span>
+            <p className="text-base font-black text-emerald-600 font-mono tabular-nums">
+              {formatPV(activeFocusMember.leftPV)} PV
+            </p>
+            <span className="text-[10px] text-neutral-400">
+              সদস্য: {focusLegStats.left.totalMembers} (সক্রিয়: {focusLegStats.left.activeMembers}) • CF: {formatPV(activeFocusMember.leftCarryForward)} PV
+            </span>
+          </div>
+          <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-3 rounded-xl">
+            <span className="text-neutral-500 text-[10px] font-semibold block">Right Team GV & Count</span>
+            <p className="text-base font-black text-teal-600 font-mono tabular-nums">
+              {formatPV(activeFocusMember.rightPV)} PV
+            </p>
+            <span className="text-[10px] text-neutral-400">
+              সদস্য: {focusLegStats.right.totalMembers} (সক্রিয়: {focusLegStats.right.activeMembers}) • CF: {formatPV(activeFocusMember.rightCarryForward)} PV
+            </span>
+          </div>
+          <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-3 rounded-xl">
+            <span className="text-neutral-500 text-[10px] font-semibold block">Total Matched PV</span>
+            <p className="text-base font-black text-amber-600 font-mono tabular-nums">
+              {formatPV(activeFocusMember.totalMatchedPV)} PV
+            </p>
+            <span className="text-[10px] text-neutral-400">৳ ১০ / PV</span>
+          </div>
+          <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-3 rounded-xl">
+            <span className="text-neutral-500 text-[10px] font-semibold block">Selected Root</span>
+            <p className="text-sm font-black text-emerald-700 dark:text-emerald-400 font-mono truncate">
+              {activeFocusMember.id}
+            </p>
+            <span className="text-[10px] text-neutral-400 truncate block">{activeFocusMember.fullName}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Blank Slot Registration Modal */}
       {addCustomerSlot && (
         <CustomerRegistrationModal
           isOpen={true}
           onClose={() => setAddCustomerSlot(null)}
           source="binary_tree"
-          title="কাস্টমার রেজিস্ট্রেশন ও স্লট রিজার্ভ"
-          subtitle={`নির্বাচিত পজিশন: ${addCustomerSlot.leg === 'left' ? 'বাম (Left)' : 'ডান (Right)'}`}
+          title="নতুন মেম্বার নিবন্ধন (10-Field)"
+          subtitle={`Parent: ${addCustomerSlot.parentId} • Position: ${addCustomerSlot.leg.toUpperCase()}`}
           reservedCompanyId={addCustomerSlot.reservedCompanyId}
-          initialReferralId={ownCompanyMemberId || currentMember?.customerId || currentMember?.id || COMPANY_MASTER_ROOT_ID}
+          initialReferralId={ownCompanyMemberId || activeFocusMember?.id || COMPANY_MASTER_ROOT_ID}
           initialPlacementId={addCustomerSlot.parentId}
           initialPlacementPosition={addCustomerSlot.leg}
           lockPlacement={true}
+          showTabs={false}
           onSwitchToLogin={() => setAddCustomerSlot(null)}
           onSuccess={() => {
             if (selectedRootId) {
@@ -849,20 +885,17 @@ export const BinaryTreeViewer: React.FC = () => {
         />
       )}
 
-      {/* AI Placement Engine Customer Registration Modal - EXACT SAME SHARED FORM */}
-      {aiRegistrationOpen && (
+      {/* Auto-BFS Registration Modal */}
+      {newRegistrationOpen && (
         <CustomerRegistrationModal
           isOpen={true}
-          onClose={() => setAiRegistrationOpen(false)}
-          source="ai_placement"
-          title="Customer Registration & Slot Reserved"
-          aiRecommendation={aiRecommendation}
-          reservedCompanyId={aiRecommendation.reservedCompanyId}
-          initialReferralId={aiRecommendation.sponsorId}
-          initialPlacementId={aiRecommendation.placementId}
-          initialPlacementPosition={aiRecommendation.position}
-          lockPlacement={true}
-          onSwitchToLogin={() => setAiRegistrationOpen(false)}
+          onClose={() => setNewRegistrationOpen(false)}
+          source="binary_tree"
+          title="নতুন কাস্টমার ও নেটওয়ার্ক নিবন্ধন"
+          subtitle="Referral ID পরিবর্তনযোগ্য এবং Manual অথবা Auto BFS Placement নির্বাচন করা যাবে"
+          initialReferralId={activeFocusMember?.id || ownCompanyMemberId || aiRecommendation.sponsorId}
+          showTabs={false}
+          onSwitchToLogin={() => setNewRegistrationOpen(false)}
           onSuccess={() => {
             if (selectedRootId) {
               openIsolatedSubtree(selectedRootId, { pushHistory: false });

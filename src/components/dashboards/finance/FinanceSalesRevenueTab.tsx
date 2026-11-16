@@ -170,7 +170,7 @@ export const FinanceSalesRevenueTab: React.FC<FinanceSalesRevenueTabProps> = ({
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement('a');
     link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `TOMSHOPBD_Sales_Revenue_Audit_${Date.now()}.csv`);
+    link.setAttribute('download', `APON_BAZAR_Sales_Revenue_Audit_${Date.now()}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);

@@ -1,6 +1,6 @@
 /**
  * SEO Head Component
- * Project: ঘরের বাজার বিডি (Ghorer Bazar BD)
+ * Project: APON BAZAR (আপন বাজার)
  */
 
 import React, { useEffect } from 'react';

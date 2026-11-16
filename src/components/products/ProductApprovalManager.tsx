@@ -1,6 +1,6 @@
 /**
  * Product Approval & Review Workflow Manager (Admin & Operations Partner)
- * Project: ঘরের বাজার বিডি (Ghorer Bazar BD)
+ * Project: APON BAZAR (আপন বাজার)
  */
 
 import React, { useState } from 'react';
@@ -149,7 +149,7 @@ export const ProductApprovalManager: React.FC<ProductApprovalManagerProps> = ({
                       {product.titleBn || product.title}
                     </h3>
                     <p className="text-xs text-neutral-500 line-clamp-1">
-                      ব্র্যান্ড: {product.brandName || 'TOMSHOPBD Pure'}
+                      ব্র্যান্ড: {product.brandName || 'APON BAZAR Pure'}
                     </p>
                   </div>
                 </div>

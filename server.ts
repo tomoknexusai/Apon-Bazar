@@ -1,6 +1,6 @@
 /**
  * Full-Stack Express Server with Strict RBAC API Endpoints
- * Project: AANO BAZAR (আনো বাজার)
+ * Project: APON BAZAR (আপন বাজার)
  */
 
 import express from 'express';
@@ -8,6 +8,9 @@ import path from 'path';
 import fs from 'fs';
 import { GoogleGenAI } from '@google/genai';
 import { defaultBinaryTreeStore } from './src/server/binaryTreeStore';
+import { defaultCompanyAccountsAuthStore } from './src/server/companyAccountsAuthStore';
+import { defaultCustomerLedgerStore, evaluateEarnedRank } from './src/server/customerLedgerStore';
+import { computeSubtreeLegStats, findBinaryTreeNodeById } from './src/lib/binaryBlankPositionEngine';
 
 // Lazy Gemini API Client (User-Agent header telemetry compliant)
 let geminiAiClient: GoogleGenAI | null = null;
@@ -235,7 +238,7 @@ async function startServer() {
   app.get('/api/health', (_req, res) => {
     res.json({
       status: 'ok',
-      service: 'AANO Bazar Enterprise API',
+      service: 'APON BAZAR Enterprise API',
       aiEngine: 'Gemini 3.7 Flash + 24/7 Auto-Reply Engine',
       smsGatewayActive: true,
       rbacEnforced: true,
@@ -271,7 +274,7 @@ async function startServer() {
 
       if (client) {
         try {
-          const prompt = `You are the 24/7 AI SMS Product Order & Customer Assistant for AANO BAZAR (আনো বাজার), a leading Bangladeshi e-commerce and local delivery network.
+          const prompt = `You are the 24/7 AI SMS Product Order & Customer Assistant for APON BAZAR (আপন বাজার), a leading Bangladeshi e-commerce and local delivery network.
 Your job is to read raw incoming SMS messages in Bengali, Banglish, or English, accurately parse customer orders, identify items & quantities, extract delivery addresses inside Bangladesh, detect customer intent, and craft an instant 24/7 automated SMS reply.
 
 Available Product Catalog Reference:
@@ -393,7 +396,7 @@ Return a valid JSON object ONLY (do not include markdown ticks or wrap in quotes
 
       if (client) {
         try {
-          const systemInstruction = `You are the 24/7 AI Intelligent Support & Operations Agent for AANO BAZAR (আনো বাজার) in Bangladesh.
+          const systemInstruction = `You are the 24/7 AI Intelligent Support & Operations Agent for APON BAZAR (আপন বাজার) in Bangladesh.
 Role of user: ${userRole}.
 Customer Name: ${customerName || 'সম্মানিত গ্রাহক'}.
 Customer Phone: ${customerPhone}.
@@ -423,7 +426,7 @@ Instructions:
       }
 
       if (!replyText) {
-        usedModel = 'aano-fallback-reply-engine';
+        usedModel = 'aponbazar-fallback-reply-engine';
         replyText = generateFallbackChatReply(message, userRole, customerName);
       }
 
@@ -450,7 +453,7 @@ Instructions:
     try {
       const sender = req.body.sender || req.body.From || req.body.phone || req.body.mobile || '01711000000';
       const text = req.body.text || req.body.Body || req.body.message || req.body.sms || '';
-      const gateway = req.body.gateway || 'AANO-Cloud-Gateway';
+      const gateway = req.body.gateway || 'APONBAZAR-Cloud-Gateway';
 
       console.log(`[INCOMING SMS GATEWAY] Received SMS from ${sender} via ${gateway}: "${text}"`);
 
@@ -481,7 +484,7 @@ Instructions:
       status: 'operational',
       ai24x7Active: true,
       geminiConnected: hasKey,
-      activeModel: hasKey ? 'gemini-3.7-flash (Server-Side)' : 'aano-smart-heuristic-v3 (Built-in)',
+      activeModel: hasKey ? 'gemini-3.7-flash (Server-Side)' : 'aponbazar-smart-heuristic-v3 (Built-in)',
       supportedCarriers: ['Grameenphone', 'Robi', 'Banglalink', 'Teletalk', 'Airtel', 'WhatsApp Business API'],
       dailyQuota: 50000,
       systemUptime: '99.98%',
@@ -955,7 +958,7 @@ Instructions:
   });
 
   // =========================================================================
-  // AANO BAZAR APPLICATION ROLE SYSTEM — SUPER ADMIN ONLY BACKEND API
+  // APON BAZAR APPLICATION ROLE SYSTEM — SUPER ADMIN ONLY BACKEND API
   // =========================================================================
 
   interface ServerRoleApplication {
@@ -1021,7 +1024,7 @@ Instructions:
       fullName: 'তানজিনা রহমান',
       applicantName: 'তানজিনা রহমান',
       mobileNumber: '01711000002',
-      email: 'tanjina.admin@aanobazar.com',
+      email: 'tanjina.admin@aponbazar.com',
       nationalId: '19942691234567892',
       dateOfBirth: '1994-05-20',
       gender: 'female',
@@ -1073,7 +1076,7 @@ Instructions:
       fullName: 'ফরিদা পারভীন',
       applicantName: 'ফরিদা পারভীন',
       mobileNumber: '01611000005',
-      email: 'farida.ops@aanobazar.com',
+      email: 'farida.ops@aponbazar.com',
       nationalId: '19912691234567895',
       dateOfBirth: '1991-03-30',
       gender: 'female',
@@ -1120,7 +1123,7 @@ Instructions:
       fullName: 'রাশেদুল হাসান',
       applicantName: 'রাশেদুল হাসান',
       mobileNumber: '01511000006',
-      email: 'rashedul.del@aanobazar.com',
+      email: 'rashedul.del@aponbazar.com',
       nationalId: '19982691234567896',
       dateOfBirth: '1998-09-18',
       gender: 'male',
@@ -1185,7 +1188,7 @@ Instructions:
       educationalQualification: 'Masters in Economics, Rajshahi University',
       experienceYears: '6 Years',
       previousExperience: 'Business Development Manager at Agro Export Ltd.',
-      statementOfPurpose: 'I want to lead AANO BAZAR operations across Khulna District as the District Admin.',
+      statementOfPurpose: 'I want to lead APON BAZAR operations across Khulna District as the District Admin.',
       documents: [
         { title: 'National ID Card', url: 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?auto=format&fit=crop&q=80&w=400', type: 'image/jpeg' },
         { title: 'Academic Certificate (Masters)', url: 'https://images.unsplash.com/photo-1544717305-2782549b5136?auto=format&fit=crop&q=80&w=400', type: 'application/pdf' }
@@ -1832,22 +1835,490 @@ Instructions:
     }
   });
 
+  app.get('/api/network/referral/validate', async (req, res) => {
+    try {
+      const referralId = String(req.query.referralId || '').trim();
+      if (!referralId) {
+        return res.status(400).json({
+          valid: false,
+          statusCode: 400,
+          message: 'referralId query parameter is required.'
+        });
+      }
+      const result = await defaultBinaryTreeStore.validateReferral(referralId);
+      return res.status(result.statusCode || (result.valid ? 200 : 400)).json({
+        valid: result.valid,
+        statusCode: result.statusCode,
+        message: result.message,
+        referralId: result.referralNode?.id,
+        referralName: result.referralNode?.fullName,
+        active: result.referralNode?.active,
+        status: result.referralNode?.status
+      });
+    } catch (err: any) {
+      return res.status(500).json({
+        valid: false,
+        statusCode: 500,
+        message: err?.message || 'Failed to validate referral ID'
+      });
+    }
+  });
+
+  app.get('/api/network/placement/inspect', async (req, res) => {
+    try {
+      const parentId = String(req.query.parentId || '').trim();
+      const q = String(req.query.q || '').trim();
+      const { inspection, candidates } = await defaultBinaryTreeStore.inspectPlacementParent(
+        parentId || undefined,
+        q || undefined
+      );
+      if (parentId && inspection) {
+        return res.status(inspection.found ? 200 : inspection.statusCode || 404).json({
+          found: inspection.found,
+          eligible: inspection.eligible,
+          statusCode: inspection.statusCode,
+          message: inspection.message,
+          parentId: inspection.parentId,
+          parentName: inspection.parentName,
+          parentLevel: inspection.parentLevel,
+          left: inspection.left,
+          right: inspection.right,
+          candidates
+        });
+      }
+      return res.status(200).json({
+        found: false,
+        eligible: false,
+        statusCode: 200,
+        message: 'Placement Parent candidates loaded.',
+        candidates
+      });
+    } catch (err: any) {
+      return res.status(500).json({
+        found: false,
+        eligible: false,
+        statusCode: 500,
+        message: err?.message || 'Failed to inspect placement parent'
+      });
+    }
+  });
+
   app.post('/api/network/register-customer', async (req, res) => {
     try {
       const appOrigin =
         process.env.APP_URL ||
         `${req.protocol}://${req.get('host') || 'localhost:3000'}`;
+      const body = req.body || {};
+      const requestorRole = (req.header('x-user-role') || '').trim().toLowerCase();
+      const requestorUserId = (req.header('x-user-id') || '').trim();
+
       const result = await defaultBinaryTreeStore.registerCustomerAtomically({
-        ...(req.body || {}),
+        ...body,
+        requestorRole,
+        requestorUserId,
         appOrigin
       });
-      return res.status(result.statusCode || (result.success ? 200 : 400)).json(result);
+      if (result.success && result.registeredMember && result.customerId) {
+        const regMember = result.registeredMember;
+        try {
+          await defaultCustomerLedgerStore.upsertRegisteredCustomerAccount({
+            userId: regMember.userId,
+            customerId: result.customerId,
+            username: regMember.username || regMember.mobile || result.customerId,
+            fullName: regMember.fullName,
+            mobileNumber: regMember.mobile,
+            email: regMember.email,
+            address: regMember.address,
+            nidNumber: regMember.nidNumber,
+            plainPassword: String(body.password || '123456'),
+            sponsorId: result.referralId || regMember.sponsorId || 'AB-1000000001',
+            placementParentId: result.placementId || regMember.parentId || 'AB-1000000001',
+            placementPosition: (result.placementPosition || 'LEFT') as 'LEFT' | 'RIGHT' | 'ROOT',
+            placementLevel: result.placementLevel || regMember.placementLevel || 2,
+            registeredAt: result.registrationDate || regMember.registeredAt || new Date().toISOString()
+          });
+        } catch (ledgerErr) {
+          console.error('[CustomerLedgerStore] Failed persisting registered customer auth record:', ledgerErr);
+        }
+      }
+      return res.status(result.statusCode || (result.success ? 200 : 400)).json({
+        ...result,
+        referralLink: result.customerId
+          ? `${appOrigin.replace(/\/$/, '')}/register?ref=${result.customerId}`
+          : undefined
+      });
     } catch (err: any) {
       return res.status(500).json({
         success: false,
         statusCode: 500,
         message: err?.message || 'Customer registration failed'
       });
+    }
+  });
+
+  app.get('/api/network/customer-dashboard/:customerId', async (req, res) => {
+    try {
+      const cleanTarget = String(req.params.customerId || '').trim();
+      const requestorRole = (req.header('x-user-role') || '').trim().toLowerCase();
+      const requestorUserId = (req.header('x-user-id') || '').trim();
+      const requestorCompanyId = (req.header('x-company-id') || '').trim();
+
+      if (!requestorUserId || requestorUserId === 'guest' || !requestorRole) {
+        return res.status(403).json({
+          success: false,
+          statusCode: 403,
+          errorCode: 'ACCESS_DENIED',
+          message: 'Access Denied: অনুগ্রহ করে লগইন করুন।'
+        });
+      }
+
+      const payload = await defaultBinaryTreeStore.getState();
+      const nodes = payload.treeState.nodes;
+      const mappings = payload.treeState.idMigrationMappings;
+      const targetNode = findBinaryTreeNodeById(nodes, cleanTarget, mappings);
+      const ledgerAccount = await defaultCustomerLedgerStore.findAccountByUserIdOrCustomerId(cleanTarget);
+
+      const isKnownAdmin =
+        requestorRole === 'super_admin' ||
+        requestorRole === 'admin' ||
+        requestorRole === 'founder' ||
+        requestorUserId === FIXED_SUPER_ADMIN_ID ||
+        requestorUserId === 'APON-SADMIN-001' ||
+        requestorUserId === 'usr-admin-02' ||
+        requestorUserId === 'usr-company-root';
+
+      if (!targetNode && !ledgerAccount) {
+        return res.status(404).json({
+          success: false,
+          statusCode: 404,
+          errorCode: 'NOT_FOUND',
+          message: `Customer ID '${cleanTarget}' খুঁজে পাওয়া যায়নি।`
+        });
+      }
+
+      if (!isKnownAdmin) {
+        const targetIdResolved = (targetNode?.id || ledgerAccount?.customerId || cleanTarget).toLowerCase();
+        const targetUserIdResolved = (targetNode?.userId || ledgerAccount?.userId || '').toLowerCase();
+        const ownsTarget =
+          (targetUserIdResolved && targetUserIdResolved === requestorUserId.toLowerCase()) ||
+          (requestorCompanyId && targetIdResolved === requestorCompanyId.toLowerCase()) ||
+          (requestorUserId === 'usr-network-07' && targetIdResolved === 'ab-1000000002');
+
+        if (!ownsTarget) {
+          return res.status(403).json({
+            success: false,
+            statusCode: 403,
+            errorCode: 'ACCESS_DENIED',
+            message: 'Access Denied: আপনি অন্য কোনো গ্রাহকের ব্যক্তিগত ড্যাশবোর্ড বা ওয়ালেট তথ্য দেখতে পারবেন না।'
+          });
+        }
+      }
+
+      const appOrigin =
+        process.env.APP_URL ||
+        `${req.protocol}://${req.get('host') || 'localhost:3000'}`;
+      const summary = await defaultCustomerLedgerStore.getCustomerDashboardSummary({
+        targetCustomerId: cleanTarget,
+        nodes,
+        mappings,
+        appOrigin
+      });
+
+      if (!summary) {
+        return res.status(404).json({
+          success: false,
+          statusCode: 404,
+          errorCode: 'NOT_FOUND',
+          message: 'গ্রাহকের ড্যাশবোর্ড তথ্য পাওয়া যায়নি।'
+        });
+      }
+
+      return res.json({
+        success: true,
+        statusCode: 200,
+        summary
+      });
+    } catch (err: any) {
+      return res.status(500).json({
+        success: false,
+        statusCode: 500,
+        message: err?.message || 'Failed to load customer dashboard summary'
+      });
+    }
+  });
+
+  app.post('/api/network/activate-package', async (req, res) => {
+    try {
+      const requestorRole = (req.header('x-user-role') || '').trim().toLowerCase();
+      const requestorUserId = (req.header('x-user-id') || '').trim();
+      const requestorCompanyId = (req.header('x-company-id') || '').trim();
+      if (!requestorUserId || requestorUserId === 'guest') {
+        return res.status(403).json({
+          success: false,
+          statusCode: 403,
+          message: 'Access Denied: প্যাকেজ অ্যাক্টিভ করতে লগইন প্রয়োজন।'
+        });
+      }
+
+      const { customerId, packageId, paymentSource, orderOrPaymentRef } = req.body || {};
+      const statePayload = await defaultBinaryTreeStore.getState();
+      const nodes = statePayload.treeState.nodes;
+      const mappings = statePayload.treeState.idMigrationMappings;
+      const targetNode = findBinaryTreeNodeById(
+        nodes,
+        String(customerId || requestorCompanyId || requestorUserId),
+        mappings
+      );
+
+      if (!targetNode || targetNode.nodeStatus === 'blank') {
+        return res.status(404).json({
+          success: false,
+          statusCode: 404,
+          message: 'সদস্যকে বাইনারি ট্রিতে পাওয়া যায়নি।'
+        });
+      }
+
+      const isAdmin =
+        requestorRole === 'super_admin' ||
+        requestorRole === 'admin' ||
+        requestorUserId === FIXED_SUPER_ADMIN_ID ||
+        requestorUserId === 'usr-company-root';
+
+      if (!isAdmin && targetNode.userId !== requestorUserId && targetNode.id !== requestorCompanyId) {
+        return res.status(403).json({
+          success: false,
+          statusCode: 403,
+          message: 'Access Denied: আপনি অন্য কারো প্যাকেজ অ্যাক্টিভ করতে পারবেন না।'
+        });
+      }
+
+      const sponsorNode = targetNode.sponsorId
+        ? findBinaryTreeNodeById(nodes, targetNode.sponsorId, mappings)
+        : undefined;
+
+      const ledgerRes = await defaultCustomerLedgerStore.recordPackageActivationLedger({
+        userId: targetNode.userId || requestorUserId,
+        customerId: targetNode.id,
+        packageId: String(packageId || ''),
+        paymentSource: isAdmin && paymentSource === 'admin_verified'
+          ? 'admin_verified'
+          : paymentSource === 'payment_gateway'
+          ? 'payment_gateway'
+          : 'main_wallet',
+        orderOrPaymentRef: orderOrPaymentRef ? String(orderOrPaymentRef) : undefined,
+        sponsorUserId: sponsorNode?.userId,
+        sponsorCustomerId: sponsorNode?.id,
+        sponsorCommissionPct: 15,
+        memberFullName: targetNode.fullName
+      });
+
+      if (!ledgerRes.success || !ledgerRes.pkg) {
+        return res.status(ledgerRes.statusCode).json(ledgerRes);
+      }
+
+      const legStats = computeSubtreeLegStats(nodes, targetNode.id);
+      const activeDirects = nodes.filter(
+        (n) =>
+          n.nodeStatus !== 'blank' &&
+          !n.isBlankSlot &&
+          n.id !== targetNode.id &&
+          (n.sponsorId || n.referralId) === targetNode.id &&
+          n.active !== false &&
+          (n.pv || 0) > 0
+      ).length;
+      const evalRank = evaluateEarnedRank({
+        personalPV: ledgerRes.pkg.pv,
+        teamPV: legStats.left.totalEligiblePV + legStats.right.totalEligiblePV,
+        activeDirectReferrals: activeDirects,
+        hasActivePackage: true
+      });
+
+      const treeRes = await defaultBinaryTreeStore.activateMemberPackageOnTree({
+        memberId: targetNode.id,
+        packageId: ledgerRes.pkg.id,
+        packageName: ledgerRes.pkg.nameBn,
+        pv: ledgerRes.pkg.pv,
+        orderOrPaymentRef: ledgerRes.activationRecord?.orderOrPaymentRef || null,
+        rank: targetNode.id <= 'AB-1000000015' ? targetNode.rank : evalRank.rank
+      });
+
+      const appOrigin =
+        process.env.APP_URL ||
+        `${req.protocol}://${req.get('host') || 'localhost:3000'}`;
+      const refreshedState = treeRes.treeState?.nodes || nodes;
+      const summary = await defaultCustomerLedgerStore.getCustomerDashboardSummary({
+        targetCustomerId: targetNode.id,
+        nodes: refreshedState,
+        mappings,
+        appOrigin
+      });
+
+      return res.json({
+        success: true,
+        statusCode: 200,
+        message: ledgerRes.message,
+        activationRecord: ledgerRes.activationRecord,
+        treeState: treeRes.treeState,
+        summary
+      });
+    } catch (err: any) {
+      return res.status(500).json({
+        success: false,
+        statusCode: 500,
+        message: err?.message || 'Package activation failed'
+      });
+    }
+  });
+
+  app.post('/api/network/wallet/withdrawal', async (req, res) => {
+    try {
+      const requestorRole = (req.header('x-user-role') || '').trim().toLowerCase();
+      const requestorUserId = (req.header('x-user-id') || '').trim();
+      const requestorCompanyId = (req.header('x-company-id') || '').trim();
+      if (!requestorUserId || requestorUserId === 'guest') {
+        return res.status(403).json({ success: false, statusCode: 403, message: 'Access Denied' });
+      }
+
+      const { customerId, amount, method, accountDetails } = req.body || {};
+      const statePayload = await defaultBinaryTreeStore.getState();
+      const targetNode = findBinaryTreeNodeById(
+        statePayload.treeState.nodes,
+        String(customerId || requestorCompanyId || requestorUserId),
+        statePayload.treeState.idMigrationMappings
+      );
+      const targetCustomerId = targetNode?.id || String(customerId || requestorCompanyId || '');
+      const targetUserId = targetNode?.userId || requestorUserId;
+
+      const isAdmin = requestorRole === 'super_admin' || requestorRole === 'admin';
+      if (!isAdmin && targetUserId !== requestorUserId) {
+        return res.status(403).json({ success: false, statusCode: 403, message: 'Access Denied' });
+      }
+
+      const txRes = await defaultCustomerLedgerStore.recordWalletTransaction({
+        userId: targetUserId,
+        customerId: targetCustomerId,
+        walletType: 'commission',
+        type: 'withdrawal',
+        amount: Number(amount) || 0,
+        source: 'withdrawal',
+        status: 'completed',
+        description: `উইথড্র রিকোয়েস্ট (${method || 'bkash'}: ${accountDetails || ''})`,
+        referenceId: `WD-${Date.now()}`
+      });
+
+      if (!txRes.success) {
+        return res.status(txRes.statusCode).json(txRes);
+      }
+
+      const summary = await defaultCustomerLedgerStore.getCustomerDashboardSummary({
+        targetCustomerId: targetCustomerId || targetUserId,
+        nodes: statePayload.treeState.nodes,
+        mappings: statePayload.treeState.idMigrationMappings
+      });
+
+      return res.json({
+        success: true,
+        statusCode: 200,
+        message: txRes.message,
+        transaction: txRes.transaction,
+        summary
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err?.message || 'Withdrawal failed' });
+    }
+  });
+
+  app.post('/api/network/wallet/adjust', verifyAdminOrSuperAdmin, async (req, res) => {
+    try {
+      const { customerId, userId, walletType, type, amount, description, referenceId } = req.body || {};
+      const statePayload = await defaultBinaryTreeStore.getState();
+      const targetNode = findBinaryTreeNodeById(
+        statePayload.treeState.nodes,
+        String(customerId || userId || ''),
+        statePayload.treeState.idMigrationMappings
+      );
+      const resolvedUserId = String(userId || targetNode?.userId || '').trim();
+      const resolvedCustomerId = targetNode?.id || String(customerId || '').trim();
+      if (!resolvedUserId && !resolvedCustomerId) {
+        return res.status(400).json({ success: false, message: 'customerId অথবা userId আবশ্যক।' });
+      }
+
+      const txRes = await defaultCustomerLedgerStore.recordWalletTransaction({
+        userId: resolvedUserId || resolvedCustomerId,
+        customerId: resolvedCustomerId,
+        walletType: walletType || 'main',
+        type: type === 'debit' ? 'debit' : 'credit',
+        amount: Number(amount) || 0,
+        source: 'admin_adjustment',
+        status: 'completed',
+        description: String(description || 'অ্যাডমিন ওয়ালেট অ্যাডজাস্টমেন্ট'),
+        referenceId: referenceId ? String(referenceId) : undefined
+      });
+      if (!txRes.success) {
+        return res.status(txRes.statusCode).json(txRes);
+      }
+
+      const summary = await defaultCustomerLedgerStore.getCustomerDashboardSummary({
+        targetCustomerId: resolvedCustomerId || resolvedUserId,
+        nodes: statePayload.treeState.nodes,
+        mappings: statePayload.treeState.idMigrationMappings
+      });
+
+      return res.json({
+        success: true,
+        statusCode: 200,
+        message: txRes.message,
+        transaction: txRes.transaction,
+        summary
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err?.message || 'Wallet adjustment failed' });
+    }
+  });
+
+  app.post('/api/network/token/adjust', verifyAdminOrSuperAdmin, async (req, res) => {
+    try {
+      const { customerId, userId, type, amount, source, description, referenceId } = req.body || {};
+      const statePayload = await defaultBinaryTreeStore.getState();
+      const targetNode = findBinaryTreeNodeById(
+        statePayload.treeState.nodes,
+        String(customerId || userId || ''),
+        statePayload.treeState.idMigrationMappings
+      );
+      const resolvedUserId = String(userId || targetNode?.userId || '').trim();
+      const resolvedCustomerId = targetNode?.id || String(customerId || '').trim();
+      if (!resolvedUserId && !resolvedCustomerId) {
+        return res.status(400).json({ success: false, message: 'customerId অথবা userId আবশ্যক।' });
+      }
+
+      const txRes = await defaultCustomerLedgerStore.recordTokenTransaction({
+        userId: resolvedUserId || resolvedCustomerId,
+        customerId: resolvedCustomerId,
+        type: type === 'debit' ? 'debit' : 'credit',
+        amount: Number(amount) || 0,
+        source: source || 'admin_adjustment',
+        description: String(description || 'TOMOK টোকেন অ্যাডমিন অ্যাডজাস্টমেন্ট'),
+        referenceId: referenceId ? String(referenceId) : undefined
+      });
+      if (!txRes.success) {
+        return res.status(txRes.statusCode).json(txRes);
+      }
+
+      const summary = await defaultCustomerLedgerStore.getCustomerDashboardSummary({
+        targetCustomerId: resolvedCustomerId || resolvedUserId,
+        nodes: statePayload.treeState.nodes,
+        mappings: statePayload.treeState.idMigrationMappings
+      });
+
+      return res.json({
+        success: true,
+        statusCode: 200,
+        message: txRes.message,
+        transaction: txRes.transaction,
+        summary
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err?.message || 'Token adjustment failed' });
     }
   });
 
@@ -1939,7 +2410,7 @@ Instructions:
     }
   });
 
-  app.post('/api/network/placement/reassign', async (req, res) => {
+  app.post('/api/network/placement/reassign', verifySuperAdminOnly, async (req, res) => {
     try {
       const result = await defaultBinaryTreeStore.reassignPlacement(req.body || {});
       return res.status(result.statusCode || 200).json(result);
@@ -1967,6 +2438,76 @@ Instructions:
       statusCode: 403,
       message: `Reserved Blank Slot '${req.params.id}' কখনো বাতিল, ডিলিট বা অন্য কারো জন্য পুনঃব্যবহার করা যাবে না।`
     });
+  });
+
+  /**
+   * =========================================================================
+   * FIRST 7 COMPANY ACCOUNTS AUTHENTICATION & MANDATORY PASSWORD CHANGE API
+   * =========================================================================
+   */
+  app.get('/api/auth/company-accounts', verifyAdminOrSuperAdmin, async (_req, res) => {
+    try {
+      const accounts = await defaultCompanyAccountsAuthStore.listAccountsSanitized();
+      return res.json({ success: true, accounts, total: accounts.length });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err?.message || 'Failed to load company accounts' });
+    }
+  });
+
+  app.post('/api/auth/login', async (req, res) => {
+    try {
+      const { identifier, password } = req.body || {};
+      const cleanId = String(identifier || '');
+      const cleanPw = String(password || '');
+      const companyRes = await defaultCompanyAccountsAuthStore.authenticate(cleanId, cleanPw);
+      if (companyRes.matchedAccountRecord) {
+        return res.status(companyRes.statusCode).json(companyRes);
+      }
+
+      // Check persisted customer accounts (registered via Customer Registration / Binary Tree)
+      const custRes = await defaultCustomerLedgerStore.authenticateCustomer(cleanId, cleanPw);
+      if (custRes.matchedAccountRecord && custRes.authenticated && custRes.account) {
+        const treePayload = await defaultBinaryTreeStore.getState();
+        const summary = await defaultCustomerLedgerStore.getCustomerDashboardSummary({
+          targetCustomerId: custRes.account.customerId,
+          nodes: treePayload.treeState.nodes,
+          mappings: treePayload.treeState.idMigrationMappings
+        });
+        return res.status(200).json({
+          ...custRes,
+          account: {
+            ...custRes.account,
+            tomokTokenBalance: summary?.tokenSummary.balance ?? 0
+          },
+          summary
+        });
+      }
+
+      return res.status(custRes.statusCode).json(custRes);
+    } catch (err: any) {
+      return res.status(500).json({
+        matchedAccountRecord: false,
+        authenticated: false,
+        message: err?.message || 'Authentication failed'
+      });
+    }
+  });
+
+  app.post('/api/auth/change-password', async (req, res) => {
+    try {
+      const { identifierOrUserId, currentPassword, newPassword } = req.body || {};
+      const result = await defaultCompanyAccountsAuthStore.changePassword({
+        identifierOrUserId: String(identifierOrUserId || ''),
+        currentPassword: String(currentPassword || ''),
+        newPassword: String(newPassword || '')
+      });
+      return res.status(result.statusCode).json(result);
+    } catch (err: any) {
+      return res.status(500).json({
+        success: false,
+        message: err?.message || 'Failed to update password'
+      });
+    }
   });
 
   // Vite Middleware for Development (Dynamic import to avoid bundling Vite in production)
@@ -2129,13 +2670,13 @@ function parseSmsWithSmartHeuristics(rawText: string, senderPhone: string, sende
   let aiReplyText = '';
   if (intent === 'place_order') {
     const itemListStr = items.map((i) => `${i.productName} x ${i.quantity}`).join(', ');
-    aiReplyText = `সম্মানিত গ্রাহক, আপনার অর্ডারটি (${itemListStr}) সিস্টেমে নথিভুক্ত হয়েছে। মোট প্রদেয়: ৳${grandTotal} (ক্যাশ অন ডেলিভারি)। ডেলিভারি এলাকা: ${address.fullServiceAddress}। ট্র্যাকিং ও নিশ্চিতকরণ করতে ধন্যবাদ AANO BAZAR এ থাকার জন্য!`;
+    aiReplyText = `সম্মানিত গ্রাহক, আপনার অর্ডারটি (${itemListStr}) সিস্টেমে নথিভুক্ত হয়েছে। মোট প্রদেয়: ৳${grandTotal} (ক্যাশ অন ডেলিভারি)। ডেলিভারি এলাকা: ${address.fullServiceAddress}। ট্র্যাকিং ও নিশ্চিতকরণ করতে ধন্যবাদ APON BAZAR (আপন বাজার) এ থাকার জন্য!`;
   } else if (intent === 'check_status') {
-    aiReplyText = `সম্মানিত গ্রাহক, আপনার মোবাইল নম্বর (${extractedPhone}) এর বিপরীতে অর্ডারটি সেন্ট্রাল হাব থেকে ডেলিভারির জন্য প্রস্তুত হচ্ছে। কিছুক্ষণের মধ্যে রাইডার যোগাযোগ করবে। হেল্পলাইন: ০৯৬১২-AANOBAZAR।`;
+    aiReplyText = `সম্মানিত গ্রাহক, আপনার মোবাইল নম্বর (${extractedPhone}) এর বিপরীতে অর্ডারটি সেন্ট্রাল হাব থেকে ডেলিভারির জন্য প্রস্তুত হচ্ছে। কিছুক্ষণের মধ্যে রাইডার যোগাযোগ করবে। হেল্পলাইন: ০৯৬১২-APONBAZAR।`;
   } else if (intent === 'price_inquiry') {
-    aiReplyText = `AANO BAZAR সেরা অফার: খাঁটি সরিষার তেল ১লি ৳২১০, সুন্দরবনের মধু ৫০০গ্রা ৳৬৫০, গাওয়া ঘি ৫০০গ্রা ৳৬২০, মিনিকেট চাল ২৫কেজি ৳১৮৫০। অর্ডার করতে পণ্য ও আপনার ঠিকানা লিখে এসএমএস করুন।`;
+    aiReplyText = `APON BAZAR সেরা অফার: খাঁটি সরিষার তেল ১লি ৳২১০, সুন্দরবনের মধু ৫০০গ্রা ৳৬৫০, গাওয়া ঘি ৫০০গ্রা ৳৬২০, মিনিকেট চাল ২৫কেজি ৳১৮৫০। অর্ডার করতে পণ্য ও আপনার ঠিকানা লিখে এসএমএস করুন।`;
   } else {
-    aiReplyText = `আসসালামু আলাইকুম! AANO BAZAR 24/7 AI শপিং এসিস্ট্যান্টে স্বাগতম। আপনি সরাসরি পণ্যের নাম ও ডেলিভারি ঠিকানা লিখে এই নম্বরে SMS পাঠালে আপনার অর্ডার নিশ্চিত হয়ে যাবে।`;
+    aiReplyText = `আসসালামু আলাইকুম! APON BAZAR (আপন বাজার) 24/7 AI শপিং এসিস্ট্যান্টে স্বাগতম। আপনি সরাসরি পণ্যের নাম ও ডেলিভারি ঠিকানা লিখে এই নম্বরে SMS পাঠালে আপনার অর্ডার নিশ্চিত হয়ে যাবে।`;
   }
 
   return {
@@ -2165,7 +2706,7 @@ function generateFallbackChatReply(message: string, userRole: string, customerNa
   if (userRole === 'operations_partner' || userRole === 'super_admin' || userRole === 'admin') {
     return `সিস্টেম স্ট্যাটাস স্বাভাবিক রয়েছে। আপনার হাবের আঞ্চলিক ডিলার ও রাইডারগণ সক্রিয় রয়েছে এবং SMS চ্যানেল ও AI অটো-অর্ডার রাউটিং সফলভাবে কাজ করছে।`;
   }
-  return `আসসালামু আলাইকুম! AANO BAZAR ২৪/৭ AI গ্রাহক সেবায় স্বাগতম। আমি কীভাবে আপনাকে কেনাকাটা বা অর্ডার সংক্রান্ত তথ্যে সহায়তা করতে পারি?`;
+  return `আসসালামু আলাইকুম! APON BAZAR (আপন বাজার) ২৪/৭ AI গ্রাহক সেবায় স্বাগতম। আমি কীভাবে আপনাকে কেনাকাটা বা অর্ডার সংক্রান্ত তথ্যে সহায়তা করতে পারি?`;
 }
 
 startServer().catch((err) => {

@@ -1,6 +1,6 @@
 /**
  * Role-Based Order Routing & Workflow Stepper Component
- * Project: ঘরের বাজার বিডি (Ghorer Bazar BD)
+ * Project: APON BAZAR (আপন বাজার)
  */
 
 import React, { useState } from 'react';
@@ -165,7 +165,7 @@ export const OrderRoutingWorkflowPanel: React.FC<OrderRoutingWorkflowPanelProps>
             </span>
           </div>
           <p className="font-bold text-neutral-900 dark:text-white text-xs truncate">
-            {order.assignedDealerShopName || order.assignedDealerName || order.logistics?.vendorShopName || 'TOMSHOPBD প্রাইম আউটলেট'}
+            {order.assignedDealerShopName || order.assignedDealerName || order.logistics?.vendorShopName || 'APON BAZAR প্রাইম আউটলেট'}
           </p>
           <p className="text-[10px] text-amber-600 dark:text-amber-400">
             ফুলফিলমেন্ট ডিলার পয়েন্ট

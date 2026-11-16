@@ -38,6 +38,7 @@ import { NotificationBell } from './NotificationBell';
 import { SettingsModal } from './SettingsModal';
 import { NetworkMemberProfileModal } from '../profile/NetworkMemberProfileModal';
 import { UserRole } from '../../types';
+import { COMPANY_MASTER_ROOT_ID } from '../../types/networkMarketing';
 import { UniqueIdService } from '../../services/UniqueIdService';
 import { motion } from 'motion/react';
 import {
@@ -80,7 +81,15 @@ export const DashboardHeader: React.FC<DashboardHeaderProps> = ({
 }) => {
   const { currentUser, activeRole, logout } = useAuth();
   const { language } = useLanguage();
-  const { currentMember, isNetworkActive: networkContextActive, wallets } = useNetworkMarketing();
+  const {
+    currentMember,
+    ownCompanyMemberId,
+    isNetworkActive: networkContextActive,
+    wallets,
+    legStats,
+    customerDashboardSummary,
+    ranks
+  } = useNetworkMarketing();
   const { isPilotMode, pilotArea } = useSystemSettings();
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -136,13 +145,18 @@ export const DashboardHeader: React.FC<DashboardHeaderProps> = ({
 
   const roleLabel = getFormattedRoleLabel(activeRole, language);
 
-  // Single Permanent Member ID throughout the platform (e.g. GBD000001 or GBBD-XXXXXX)
+  // Single Permanent Member ID throughout the platform (AB-...)
   const permanentMemberId =
+    currentMember?.id ||
+    ownCompanyMemberId ||
+    currentUser.customerId ||
+    currentUser.binaryCompanyId ||
     currentUser.permanentMemberId ||
-    `GBD${(currentUser.id || '000001').replace(/\D/g, '').padStart(6, '0')}`;
+    COMPANY_MASTER_ROOT_ID;
 
   // Check network active status across contexts
   const isNetworkActive =
+    Boolean(currentMember && currentMember.active !== false && (currentMember.pv || 0) > 0) ||
     currentUser.isNetworkActive ||
     activeRole === 'network_member' ||
     networkContextActive;
@@ -150,30 +164,67 @@ export const DashboardHeader: React.FC<DashboardHeaderProps> = ({
   // Account status formatting
   const isAccountActive = currentUser.accountStatus === 'active';
 
-  // Referral details for network active members
-  const referralCode = permanentMemberId;
-  const referralLink = `${window.location.origin}/register?ref=${referralCode}`;
+  // Referral details (every registered customer can share their AB- link)
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const referralCode = customerDashboardSummary?.referralCode || permanentMemberId;
+  const referralLink =
+    customerDashboardSummary?.referralLink || `${origin}/register?ref=${referralCode}`;
 
-  const handleCopyLink = () => {
-    navigator.clipboard.writeText(referralLink);
+  const copyTextSafe = async (text: string): Promise<boolean> => {
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch {
+      // Fallback below
+    }
+    try {
+      if (typeof document !== 'undefined') {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        return ok;
+      }
+    } catch {
+      // Ignore
+    }
+    return false;
+  };
+
+  const handleCopyLink = async () => {
+    await copyTextSafe(referralLink);
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2000);
   };
 
-  const handleCopyCode = () => {
-    navigator.clipboard.writeText(referralCode);
+  const handleCopyCode = async () => {
+    await copyTextSafe(referralCode);
     setCopiedCode(true);
     setTimeout(() => setCopiedCode(false), 2000);
   };
 
-  // Rank title formatting
+  // Earned Rank formatting (NEVER conflate with Activation Package)
+  const rankLookup = ranks.find((r) => r.rank === (currentMember?.rank || 'customer'));
   const rankTitle =
-    currentMember?.packageName ||
-    (currentMember?.rank
-      ? currentMember.rank.replace(/_/g, ' ').toUpperCase()
+    customerDashboardSummary?.earnedRank?.titleBn
+      ? `${customerDashboardSummary.earnedRank.titleBn} (${customerDashboardSummary.earnedRank.titleEn})`
+      : rankLookup
+      ? `${rankLookup.titleBn} (${rankLookup.titleEn})`
       : language === 'bn'
-      ? 'নেটওয়ার্ক মেম্বার'
-      : 'Network Active Member');
+      ? 'সাধারণ গ্রাহক (Customer)'
+      : 'Customer';
+
+  const packageTitle =
+    customerDashboardSummary?.activationPackage?.packageName ||
+    currentMember?.packageName ||
+    (language === 'bn' ? 'কোনো সক্রিয় প্যাকেজ নেই' : 'No Active Package');
 
   return (
     <>
@@ -466,7 +517,7 @@ export const DashboardHeader: React.FC<DashboardHeaderProps> = ({
                   👥 Sponsor ID
                 </span>
                 <span className="font-mono font-black text-emerald-900 text-xs">
-                  {currentMember?.sponsorId || currentUser.sponsorId || 'GBD000000'}
+                  {customerDashboardSummary?.sponsorId || currentMember?.sponsorId || currentUser.sponsorId || '—'}
                 </span>
               </div>
 
@@ -476,7 +527,7 @@ export const DashboardHeader: React.FC<DashboardHeaderProps> = ({
                   👥 Placement ID
                 </span>
                 <span className="font-mono font-black text-emerald-900 text-xs">
-                  {currentMember?.parentId || 'GBD000000'}
+                  {customerDashboardSummary?.placementParentId || currentMember?.parentId || '—'}
                 </span>
               </div>
 
@@ -487,7 +538,7 @@ export const DashboardHeader: React.FC<DashboardHeaderProps> = ({
                     👥 Left Leg Count
                   </span>
                   <span className="font-black text-[#157347] text-xs">
-                    {formatPV(currentMember?.leftPV)} PV ({currentMember?.leftChildId ? '1+ Active' : '0 Members'})
+                    {formatPV(legStats.left.totalEligiblePV)} PV ({legStats.left.totalMembers} Members / {legStats.left.activeMembers} Active)
                   </span>
                 </div>
               </div>
@@ -499,19 +550,22 @@ export const DashboardHeader: React.FC<DashboardHeaderProps> = ({
                     👥 Right Leg Count
                   </span>
                   <span className="font-black text-[#157347] text-xs">
-                    {formatPV(currentMember?.rightPV)} PV ({currentMember?.rightChildId ? '1+ Active' : '0 Members'})
+                    {formatPV(legStats.right.totalEligiblePV)} PV ({legStats.right.totalMembers} Members / {legStats.right.activeMembers} Active)
                   </span>
                 </div>
               </div>
 
-              {/* ⭐ Current Rank */}
+              {/* ⭐ Current Earned Rank & Package */}
               <div className="p-2.5 rounded-xl bg-white border border-amber-300 flex items-center justify-between">
-                <div>
+                <div className="min-w-0">
                   <span className="text-[10px] text-amber-800 font-semibold block flex items-center gap-1">
-                    ⭐ Current Rank
+                    ⭐ Earned Rank / Package
                   </span>
-                  <span className="font-black text-amber-900 text-xs truncate block">
+                  <span className="font-black text-amber-900 text-xs truncate block" title={rankTitle}>
                     {rankTitle}
+                  </span>
+                  <span className="text-[10px] text-neutral-500 truncate block" title={packageTitle}>
+                    {packageTitle}
                   </span>
                 </div>
                 <Crown className="w-4 h-4 text-amber-500 shrink-0" />

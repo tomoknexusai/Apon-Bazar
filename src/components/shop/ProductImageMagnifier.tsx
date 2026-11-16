@@ -1,5 +1,5 @@
 /**
- * TOMSHOPBD — PRODUCT IMAGE MAGNIFIER & GALLERY SYSTEM
+ * APON BAZAR — PRODUCT IMAGE MAGNIFIER & GALLERY SYSTEM
  * 
  * Features:
  * - Desktop: Smooth magnifying glass / zoom effect on mouse hover
@@ -112,7 +112,7 @@ export const ProductImageMagnifier: React.FC<ProductImageMagnifierProps> = ({
       {/* Main Image Container with Magnifier Lens */}
       <div
         ref={containerRef}
-        id="tomshopbd-main-image-viewport"
+        id="aponbazar-main-image-viewport"
         className={`relative ${aspectRatioClass} w-full rounded-2xl overflow-hidden bg-neutral-100 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700/80 shadow-xs cursor-zoom-in group`}
         onMouseEnter={handleMouseEnter}
         onMouseMove={handleMouseMove}

@@ -1,5 +1,5 @@
 /**
- * Fast, Clean & Minimal Bolt-Style E-Commerce Homepage for "আনো বাজার (AANO BAZAR)"
+ * Fast, Clean & Minimal Bolt-Style E-Commerce Homepage for "আপন বাজার (APON BAZAR)"
  */
 
 import React, { useState, useRef } from 'react';
@@ -280,10 +280,10 @@ export const ECommerceStorefront: React.FC = () => {
     currentUser?.primaryRole === 'dealer';
 
   return (
-    <div id="tomshopbd-storefront-root" className="space-y-3 sm:space-y-4 pb-20 text-neutral-900 dark:text-neutral-100 min-h-screen">
+    <div id="aponbazar-storefront-root" className="space-y-3 sm:space-y-4 pb-20 text-neutral-900 dark:text-neutral-100 min-h-screen">
       
       {/* Main Storefront Container — starts directly with website banner and products */}
-      <div id="tomshopbd-main-content-container" className="max-w-7xl mx-auto px-2.5 sm:px-4 space-y-4 pt-1">
+      <div id="aponbazar-main-content-container" className="max-w-7xl mx-auto px-2.5 sm:px-4 space-y-4 pt-1">
         
         {/* HERO BANNER CAROUSEL — DIRECTLY BELOW CATEGORY MENU */}
         <BazarSadaiBannerCarousel
@@ -317,7 +317,7 @@ export const ECommerceStorefront: React.FC = () => {
         )}
 
         {/* 5. Main Catalog Product Grid & Filter Bar */}
-        <section id="tomshopbd-main-catalog-section" className="space-y-3">
+        <section id="aponbazar-main-catalog-section" className="space-y-3">
           
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-white dark:bg-neutral-900 p-2.5 rounded-xl border border-neutral-200 dark:border-neutral-800 shadow-xs">
             

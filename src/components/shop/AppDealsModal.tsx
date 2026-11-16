@@ -1,6 +1,6 @@
 /**
  * App Exclusive Deals & Mobile App Download Modal
- * Project: ঘরের বাজার বিডি (Ghorer Bazar BD)
+ * Project: APON BAZAR (আপন বাজার)
  */
 
 import React, { useState } from 'react';
@@ -182,7 +182,7 @@ export const AppDealsModal: React.FC<AppDealsModalProps> = ({ isOpen, onClose })
                 </div>
                 <div>
                   <h5 className="font-black text-xs text-neutral-900 dark:text-white">
-                    {language === 'bn' ? 'TOMSHOPBD মোবাইল অ্যাপ' : 'TOMSHOPBD Mobile App'}
+                    {language === 'bn' ? 'APON BAZAR মোবাইল অ্যাপ' : 'APON BAZAR Mobile App'}
                   </h5>
                   <p className="text-[11px] text-neutral-600 dark:text-neutral-400">
                     {language === 'bn'
@@ -199,7 +199,7 @@ export const AppDealsModal: React.FC<AppDealsModalProps> = ({ isOpen, onClose })
                 onClick={() => {
                   addNotification({
                     title: language === 'bn' ? 'অ্যাপ ডাউনলোড শুরু হয়েছে' : 'App Download Started',
-                    message: language === 'bn' ? 'TOMSHOPBD Android APK ডাউনলোড করা হচ্ছে।' : 'Downloading TOMSHOPBD Android APK.',
+                    message: language === 'bn' ? 'APON BAZAR Android APK ডাউনলোড করা হচ্ছে।' : 'Downloading APON BAZAR Android APK.',
                     type: 'info'
                   });
                 }}

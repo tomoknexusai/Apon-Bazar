@@ -1,6 +1,6 @@
 /**
  * Product Details View Modal
- * Project: TOMSHOPBD (টমশপবিডি)
+ * Project: APON BAZAR (আপন বাজার)
  */
 
 import React, { useState } from 'react';
@@ -122,7 +122,7 @@ export const ProductDetailsModal: React.FC<ProductDetailsModalProps> = ({
             <div className="space-y-4">
               <div>
                 <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider block mb-1">
-                  ব্র্যান্ড: {product.brandName || 'TOMSHOPBD Pure'}
+                  ব্র্যান্ড: {product.brandName || 'APON BAZAR Pure'}
                 </span>
                 <h1 className="text-xl sm:text-2xl font-black text-neutral-900 dark:text-white leading-tight">
                   {product.titleBn || product.title}
@@ -178,7 +178,7 @@ export const ProductDetailsModal: React.FC<ProductDetailsModalProps> = ({
               <div className="bg-neutral-50 dark:bg-neutral-800/50 p-4 rounded-2xl border border-neutral-200 dark:border-neutral-800 space-y-2 text-xs">
                 <div className="flex items-center gap-2 text-neutral-700 dark:text-neutral-300 font-bold">
                   <Store className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>শপ/ডিলার: {product.vendorShopName || 'TOMSHOPBD প্রাইম আউটলেট'}</span>
+                  <span>শপ/ডিলার: {product.vendorShopName || 'APON BAZAR প্রাইম আউটলেট'}</span>
                 </div>
 
                 {product.marketBazar && (

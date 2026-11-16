@@ -1,15 +1,15 @@
 /**
  * SEO Foundation Utility Module
- * Project: TOMSHOPBD
+ * Project: APON BAZAR (আপন বাজার)
  */
 
 import { SEOProps } from '../types';
 
 export function updateMetaTags(props: SEOProps) {
-  const defaultTitle = 'TOMSHOPBD - Enterprise E-Commerce & Delivery Platform';
-  const defaultDesc = 'TOMSHOPBD: বাংলাদেশের নির্ভরযোগ্য অনলাইন শপিং, ই-কমার্স, এমএলএম ও বিশ্বস্ত স্থানীয় হোম ডেলিভারি প্ল্যাটফর্ম।';
+  const defaultTitle = 'APON BAZAR (আপন বাজার) - Enterprise E-Commerce & Delivery Platform';
+  const defaultDesc = 'APON BAZAR (আপন বাজার): বাংলাদেশের নির্ভরযোগ্য অনলাইন শপিং, ই-কমার্স, নেটওয়ার্ক মার্কেটিং ও বিশ্বস্ত স্থানীয় হোম ডেলিভারি প্ল্যাটফর্ম।';
 
-  const title = props.title ? `${props.title} | TOMSHOPBD` : defaultTitle;
+  const title = props.title ? `${props.title} | APON BAZAR` : defaultTitle;
   const description = props.description || defaultDesc;
   const canonical = props.canonicalUrl || window.location.href;
 
@@ -77,10 +77,10 @@ function injectSchemaJsonLd(type: 'Organization' | 'LocalBusiness' | 'WebSite') 
   const schemaData = {
     '@context': 'https://schema.org',
     '@type': type,
-    name: 'TOMSHOPBD',
+    name: 'APON BAZAR',
     url: window.location.origin,
-    logo: `${window.location.origin}/logo.png`,
-    description: 'TOMSHOPBD Enterprise E-commerce, Network Marketing and Local Delivery Platform in Bangladesh',
+    logo: `${window.location.origin}/apon-bazar-logo.png`,
+    description: 'APON BAZAR (আপন বাজার) Enterprise E-commerce, Network Marketing and Local Delivery Platform in Bangladesh',
     address: {
       '@type': 'PostalAddress',
       addressLocality: 'Dhaka',
@@ -96,7 +96,7 @@ function injectSchemaJsonLd(type: 'Organization' | 'LocalBusiness' | 'WebSite') 
 }
 
 export function generateRobotsTxt(): string {
-  return `# robots.txt for TOMSHOPBD
+  return `# robots.txt for APON BAZAR (আপন বাজার)
 User-agent: *
 Allow: /
 Disallow: /admin/

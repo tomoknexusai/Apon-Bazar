@@ -17,6 +17,7 @@ import { ThemeToggle } from '../common/ThemeToggle';
 import { NotificationBell } from '../common/NotificationBell';
 import { PhoneOtpModal } from '../auth/PhoneOtpModal';
 import { RegisterModal } from '../auth/RegisterModal';
+import { CustomerRegistrationModal } from '../auth/CustomerRegistrationModal';
 import { NetworkMemberProfileModal } from '../profile/NetworkMemberProfileModal';
 import { WishlistModal } from '../shop/WishlistModal';
 import { AppDealsModal } from '../shop/AppDealsModal';
@@ -76,6 +77,12 @@ export const Header: React.FC = () => {
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [showRegisterModal, setShowRegisterModal] = useState(false);
   const [registerInitialRole, setRegisterInitialRole] = useState<'buyer' | 'seller' | undefined>(undefined);
+  const [showReferralRegisterModal, setShowReferralRegisterModal] = useState(false);
+  const [urlReferralParams, setUrlReferralParams] = useState<{
+    ref?: string;
+    placement?: string;
+    leg?: 'left' | 'right';
+  }>({});
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showWishlistModal, setShowWishlistModal] = useState(false);
   const [showAppDealsModal, setShowAppDealsModal] = useState(false);
@@ -122,6 +129,32 @@ export const Header: React.FC = () => {
       mobileSearchInputRef.current.focus();
     }
   }, [isMobileSearchOpen]);
+
+  // Detect /register?ref=AB-... referral links and open shared CustomerRegistrationModal
+  useEffect(() => {
+    const syncReferralUrl = () => {
+      if (typeof window === 'undefined') return;
+      const pathname = window.location.pathname.toLowerCase();
+      const params = new URLSearchParams(window.location.search);
+      const refParam = (params.get('ref') || params.get('sponsor') || params.get('refer') || '').trim();
+      const placementParam = (params.get('placement') || '').trim();
+      const posParam = (params.get('pos') || params.get('leg') || '').trim().toLowerCase();
+      const legVal = posParam === 'right' ? 'right' : posParam === 'left' ? 'left' : undefined;
+
+      if (pathname === '/register' || pathname.startsWith('/register/') || Boolean(refParam)) {
+        setUrlReferralParams({
+          ref: refParam || undefined,
+          placement: placementParam || undefined,
+          leg: legVal
+        });
+        setShowReferralRegisterModal(true);
+      }
+    };
+
+    syncReferralUrl();
+    window.addEventListener('popstate', syncReferralUrl);
+    return () => window.removeEventListener('popstate', syncReferralUrl);
+  }, []);
 
   // Click outside & Escape key listeners for Customer Profile Dropdown
   useEffect(() => {
@@ -895,6 +928,28 @@ export const Header: React.FC = () => {
         onClose={() => setShowRegisterModal(false)}
         onSwitchToLogin={() => {
           setShowRegisterModal(false);
+          setShowLoginModal(true);
+        }}
+      />
+
+      {/* 10b. Direct /register?ref=AB-... Referral Registration Modal */}
+      <CustomerRegistrationModal
+        isOpen={showReferralRegisterModal}
+        onClose={() => {
+          setShowReferralRegisterModal(false);
+          if (typeof window !== 'undefined' && window.location.pathname.startsWith('/register')) {
+            window.history.replaceState({}, '', '/');
+          }
+        }}
+        source="dashboard"
+        title="রেফারেল কাস্টমার নিবন্ধন (Apon Bazar)"
+        subtitle="Referral ID পরিবর্তনযোগ্য এবং Manual অথবা Auto BFS Placement নির্বাচন করা যাবে"
+        initialReferralId={urlReferralParams.ref}
+        initialPlacementId={urlReferralParams.placement}
+        initialPlacementPosition={urlReferralParams.leg}
+        showTabs={true}
+        onSwitchToLogin={() => {
+          setShowReferralRegisterModal(false);
           setShowLoginModal(true);
         }}
       />

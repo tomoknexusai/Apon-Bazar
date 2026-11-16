@@ -1,5 +1,5 @@
 /**
- * TOMSHOPBD — PRODUCT IMAGE LIGHTBOX / LARGE IMAGE VIEWER
+ * APON BAZAR — PRODUCT IMAGE LIGHTBOX / LARGE IMAGE VIEWER
  * 
  * Features:
  * - High-resolution full-screen viewing
@@ -282,7 +282,7 @@ export const ProductImageLightbox: React.FC<ProductImageLightboxProps> = ({
   return (
     <div
       ref={containerRef}
-      id="tomshopbd-product-image-lightbox"
+      id="aponbazar-product-image-lightbox"
       role="dialog"
       aria-modal="true"
       aria-label="Product Image Viewer"

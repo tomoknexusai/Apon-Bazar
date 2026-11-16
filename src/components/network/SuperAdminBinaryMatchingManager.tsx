@@ -3,7 +3,7 @@
  * Project: Apon Bazar (আপন বাজার)
  * 
  * Rules & Architecture:
- * 1. Company Master Root: GBD000001 is the fixed root node of the binary tree.
+ * 1. Company Master Root: AB-1000000001 is the fixed root node of the binary tree.
  * 2. True Two-Leg Binary Structure: Each parent node has at most one LEFT and one RIGHT child.
  * 3. Strict Separation: Sponsor Relationship (Recruiter) vs. Placement Relationship (Binary Parent).
  * 4. Formula: Matched PV = MIN(Left Eligible PV, Right Eligible PV),
@@ -16,7 +16,14 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useNetworkMarketing } from '../../context/NetworkMarketingContext';
-import { NetworkMember, MatchingRecord, COMPANY_MASTER_ROOT_ID } from '../../types/networkMarketing';
+import {
+  NetworkMember,
+  MatchingRecord,
+  COMPANY_MASTER_ROOT_ID,
+  EmailDeliveryRecord,
+  IdMigrationMapping,
+  IdMigrationReport
+} from '../../types/networkMarketing';
 import {
   GitBranch,
   Layers,
@@ -24,42 +31,37 @@ import {
   ZoomIn,
   ZoomOut,
   RotateCcw,
-  Maximize2,
-  Users,
   ShieldCheck,
-  Lock,
   ArrowRight,
   ChevronRight,
   ChevronDown,
   ChevronUp,
   Download,
-  Filter,
   CheckCircle2,
   AlertTriangle,
   FileText,
-  Calendar,
   Clock,
   User,
   UserPlus,
   Sliders,
   Sparkles,
-  Info,
   DollarSign,
-  TrendingUp,
-  Award,
-  Eye,
   X,
-  ExternalLink,
   ShieldAlert,
-  ArrowDownRight,
-  ArrowDownLeft,
   ArrowLeft,
   RefreshCw,
   FolderTree,
-  Activity
+  Activity,
+  Focus,
+  Network,
+  Mail,
+  Send,
+  Database,
+  Lock
 } from 'lucide-react';
 import { CustomerRegistrationModal } from '../auth/CustomerRegistrationModal';
 import { IsolatedSubtreeStats } from '../../lib/binaryBlankPositionEngine';
+import { BinaryTreeLegend } from './BinaryTreeLegend';
 
 const TREE_URL_PARAM = 'treeCompanyId';
 
@@ -86,14 +88,16 @@ function syncTreeCompanyIdToUrl(companyId: string): void {
 }
 
 export const SuperAdminBinaryMatchingManager: React.FC = () => {
-  const { currentUser, allUsers, addAuditLog } = useAuth();
+  const { currentUser, addAuditLog } = useAuth();
   const {
     members,
-    allTreeNodes,
     blankPositions,
     treeState,
     matchingHistory,
     fetchIsolatedSubtree,
+    fetchMigrationAndEmailReport,
+    retryPendingEmails,
+    rollbackMigration,
     executeMemberMatching,
     executeNetworkBatchMatching,
     manualCarryForwardAdjustment,
@@ -102,8 +106,10 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
 
   const isSuperAdmin = currentUser?.primaryRole === 'super_admin';
 
-  // Navigation Tabs: Binary Tree | Matching | Matching History | Member Search | Reports
-  const [activeTab, setActiveTab] = useState<'binary_tree' | 'matching' | 'matching_history' | 'member_search' | 'reports'>('binary_tree');
+  // Navigation Tabs: Binary Tree | Matching | Matching History | Member Search | Reports | Migration & Email
+  const [activeTab, setActiveTab] = useState<
+    'binary_tree' | 'matching' | 'matching_history' | 'member_search' | 'reports' | 'migration_email'
+  >('binary_tree');
 
   // Isolated ID-Wise Subtree State (synced with URL for refresh persistence)
   const [focusMemberId, setFocusMemberId] = useState<string>(() =>
@@ -119,9 +125,18 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
     message: string;
     queriedId?: string;
   } | null>(null);
-  const [selectedLevelFilter, setSelectedLevelFilter] = useState<number | 'all'>('all');
+  const [selectedLevelFilter, setSelectedLevelFilter] = useState<number | 'all'>(2);
+  const [treeFocus3Only, setTreeFocus3Only] = useState<boolean>(true);
 
   const [expandedNodes, setExpandedNodes] = useState<Record<string, boolean>>({});
+
+  // Migration & Email Queue Tab State
+  const [migrationReportData, setMigrationReportData] = useState<IdMigrationReport | null>(null);
+  const [idMigrationMappings, setIdMigrationMappings] = useState<IdMigrationMapping[]>([]);
+  const [emailDeliveryLogs, setEmailDeliveryLogs] = useState<EmailDeliveryRecord[]>([]);
+  const [migrationLoading, setMigrationLoading] = useState(false);
+  const [migrationBanner, setMigrationBanner] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [confirmRollback, setConfirmRollback] = useState(false);
 
   // Blank Position Click -> Registration Modal State
   const [registerBlankSlotModal, setRegisterBlankSlotModal] = useState<{
@@ -157,6 +172,7 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
   const [matchingReason, setMatchingReason] = useState('');
   const [matchingFeedback, setMatchingFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [isProcessingMatching, setIsProcessingMatching] = useState(false);
+  const [confirmBatchMatching, setConfirmBatchMatching] = useState(false);
 
   // Manual Adjustment Modal State
   const [adjustModalOpen, setAdjustModalOpen] = useState(false);
@@ -270,8 +286,10 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
     setFocusMemberId(resp.rootId);
     setIsolatedNodes(resp.nodes);
     setIsolatedStats(resp.stats);
-    setSelectedLevelFilter('all');
-    setExpandedNodes(computeExpandedForSubtree(resp.nodes, resp.rootId, 'all'));
+    // Default 3-Node Focus Mode shows ONLY Selected Root + direct LEFT & RIGHT; Full Downline defaults to depth 3
+    const targetDepth = treeFocus3Only ? 2 : 3;
+    setSelectedLevelFilter(targetDepth);
+    setExpandedNodes(computeExpandedForSubtree(resp.nodes, resp.rootId, targetDepth));
     setTreeSearchHighlightId(null);
     if (options?.resetZoom) {
       setZoomLevel(1);
@@ -279,6 +297,39 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
     }
     syncTreeCompanyIdToUrl(resp.rootId);
   };
+
+  // Load Migration & Email report when tab is selected
+  const loadMigrationReport = async () => {
+    setMigrationLoading(true);
+    setMigrationBanner(null);
+    try {
+      const res = await fetchMigrationAndEmailReport();
+      if (res.success) {
+        setMigrationReportData(res.migrationReport || null);
+        setIdMigrationMappings(Array.isArray(res.idMigrationMappings) ? res.idMigrationMappings : []);
+        setEmailDeliveryLogs(res.emailDeliveryLogs || []);
+      } else {
+        setMigrationBanner({
+          type: 'error',
+          text: res.message || 'মাইগ্রেশন রিপোর্ট লোড করতে সমস্যা হয়েছে।'
+        });
+      }
+    } catch (err: any) {
+      setMigrationBanner({
+        type: 'error',
+        text: err?.message || 'মাইগ্রেশন রিপোর্ট লোড করতে ব্যর্থ হয়েছে।'
+      });
+    } finally {
+      setMigrationLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'migration_email' && isSuperAdmin) {
+      loadMigrationReport();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, isSuperAdmin]);
 
   // Hydrate isolated subtree on mount, URL change, or tree mutation (e.g. blank slot registration)
   useEffect(() => {
@@ -298,17 +349,29 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
     }));
   };
 
+  const handleSwitchTreeMode = (focus3: boolean) => {
+    setTreeFocus3Only(focus3);
+    setZoomLevel(1);
+    setPanOffset({ x: 0, y: 0 });
+    const targetDepth = focus3 ? 2 : 3;
+    setSelectedLevelFilter(targetDepth);
+    setExpandedNodes(computeExpandedForSubtree(isolatedNodes, focusMemberId, targetDepth));
+  };
+
   const expandAllNodes = () => {
+    setTreeFocus3Only(false);
     setSelectedLevelFilter('all');
     setExpandedNodes(computeExpandedForSubtree(isolatedNodes, focusMemberId, 'all'));
   };
 
   const collapseAllNodes = () => {
+    setTreeFocus3Only(false);
     setSelectedLevelFilter(1);
     setExpandedNodes({});
   };
 
   const handleSelectTreeLevel = (levelVal: number | 'all') => {
+    setTreeFocus3Only(false);
     setSelectedLevelFilter(levelVal);
     setExpandedNodes(computeExpandedForSubtree(isolatedNodes, focusMemberId, levelVal));
   };
@@ -358,7 +421,7 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
       setSubtreeError({
         statusCode: 400,
         code: 'INVALID_INPUT',
-        message: 'অনুগ্রহ করে একটি Company ID লিখুন (যেমন: GBD000001, GBD000002, GBD000008)।'
+        message: 'অনুগ্রহ করে একটি Company ID লিখুন (যেমন: AB-1000000001, AB-1000000002, AB-1000000007)।'
       });
       return;
     }
@@ -453,9 +516,7 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
 
   // Execute Network-Wide Batch Matching
   const handleExecuteBatchMatching = () => {
-    if (!window.confirm('আপনি কি নিশ্চিত যে সম্পূর্ণ নেটওয়ার্কের জন্য একযোগে বাইনারি ম্যাচিং সাইকেল চালাতে চান?')) {
-      return;
-    }
+    setConfirmBatchMatching(false);
     setIsProcessingMatching(true);
     setMatchingFeedback(null);
 
@@ -676,11 +737,11 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
     if (!memberId) {
       return (
         <div className="flex flex-col items-center">
-          <div className="border border-dashed border-neutral-300 dark:border-neutral-700 rounded-2xl p-3 bg-neutral-50/50 dark:bg-neutral-900/50 w-44 text-center">
-            <span className="text-2xs font-semibold text-neutral-400 block mb-1">
+          <div className="border border-dashed border-neutral-300 dark:border-neutral-700 rounded-xl p-2.5 bg-neutral-50/50 dark:bg-neutral-900/50 w-[154px] sm:w-[166px] text-center">
+            <span className="text-[10px] font-semibold text-neutral-400 block mb-0.5">
               {positionLabel} SLOT
             </span>
-            <span className="text-xs text-neutral-500 font-medium">ফাঁকা স্লট</span>
+            <span className="text-[11px] text-neutral-500 font-medium">ফাঁকা স্লট</span>
           </div>
         </div>
       );
@@ -690,7 +751,7 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
     if (!node) return null;
 
     // ------------------------------------------------------------------
-    // BLANK POSITION NODE (Pre-Reserved Sequential Company ID, Click-to-Register)
+    // BLANK POSITION NODE (SLOT-* marker, Zero AB- ID Burn, Click-to-Register)
     // ------------------------------------------------------------------
     if (node.nodeStatus === 'blank') {
       const isLeftBlank = (node.placementLeg || positionLabel.toLowerCase()) === 'left';
@@ -708,17 +769,17 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
                 leg: isLeftBlank ? 'left' : 'right'
               })
             }
-            className={`w-56 rounded-2xl p-3.5 border-2 border-dashed text-left transition-all cursor-pointer shadow-xs hover:shadow-md hover:scale-[1.02] group ${
+            className={`w-[156px] sm:w-[168px] rounded-xl p-2.5 border-2 border-dashed text-left transition-all cursor-pointer shadow-xs hover:shadow-md group ${
               isBlankHighlighted
-                ? 'ring-4 ring-amber-400 border-amber-500 bg-amber-50 dark:bg-amber-950/80'
+                ? 'ring-2 ring-amber-400 border-amber-500 bg-amber-50 dark:bg-amber-950/80'
                 : isLeftBlank
                 ? 'border-blue-400/80 dark:border-blue-700 bg-blue-50/60 dark:bg-blue-950/25 hover:border-blue-500'
                 : 'border-indigo-400/80 dark:border-indigo-700 bg-indigo-50/60 dark:bg-indigo-950/25 hover:border-indigo-500'
             }`}
           >
-            <div className="flex items-center justify-between gap-1 mb-1.5">
+            <div className="flex items-center justify-between gap-1 mb-1">
               <span
-                className={`text-[10px] font-black px-2 py-0.5 rounded-md uppercase tracking-wider ${
+                className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-wider ${
                   isLeftBlank
                     ? 'bg-blue-600 text-white'
                     : 'bg-indigo-600 text-white'
@@ -726,30 +787,29 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
               >
                 {isLeftBlank ? 'LEFT BLANK' : 'RIGHT BLANK'}
               </span>
-              <span className="text-[10px] font-bold text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-950/80 px-1.5 py-0.5 rounded flex items-center gap-0.5">
+              <span className="text-[9px] font-semibold text-neutral-500 dark:text-neutral-400 flex items-center gap-0.5">
                 <Lock className="w-2.5 h-2.5" />
-                Reserved
+                Empty
               </span>
             </div>
 
-            <div className="font-mono font-black text-sm text-neutral-900 dark:text-white tracking-tight">
-              [{node.id}]
+            <div className="font-mono font-bold text-[10px] text-neutral-700 dark:text-neutral-200 truncate" title={node.id}>
+              {node.id}
             </div>
 
-            <div className="text-[11px] text-neutral-500 dark:text-neutral-400 font-medium mt-0.5 flex items-center justify-between">
-              <span>Status: <strong className="text-amber-700 dark:text-amber-300">BLANK</strong></span>
-              <span>Parent: <strong className="font-mono text-neutral-700 dark:text-neutral-200">{parentId}</strong></span>
+            <div className="text-[10px] text-neutral-500 dark:text-neutral-400 font-medium mt-0.5 truncate">
+              Under: <strong className="font-mono text-neutral-700 dark:text-neutral-200">{parentId}</strong>
             </div>
 
             <div
-              className={`mt-2.5 w-full py-1.5 px-2 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1.5 text-white transition-colors ${
+              className={`mt-2 w-full py-1 px-2 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1 text-white transition-colors ${
                 isLeftBlank
                   ? 'bg-blue-600 group-hover:bg-blue-700'
                   : 'bg-indigo-600 group-hover:bg-indigo-700'
               }`}
             >
-              <UserPlus className="w-3.5 h-3.5" />
-              <span>Click to Register</span>
+              <UserPlus className="w-3 h-3" />
+              <span>Register</span>
             </div>
           </button>
         </div>
@@ -759,29 +819,30 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
     const member = node;
     const isTemporaryRoot = member.id === focusMemberId;
     const isCompanyMaster = member.id === COMPANY_MASTER_ROOT_ID;
-    const isExpanded = !!expandedNodes[member.id];
+    const isExpanded = treeFocus3Only ? depth === 0 : !!expandedNodes[member.id];
     const isHighlighted = treeSearchHighlightId === member.id;
     const leftTargetId = member.leftChildId || member.leftBlankId;
     const rightTargetId = member.rightChildId || member.rightBlankId;
     const hasChildren = !!leftTargetId || !!rightTargetId;
+    const showChildren = hasChildren && isExpanded;
 
     return (
       <div className="flex flex-col items-center">
-        {/* Node Card */}
+        {/* Compact Node Card */}
         <div
-          className={`relative rounded-2xl p-4 transition-all w-60 shadow-xs border cursor-pointer ${
+          className={`relative rounded-xl p-2.5 transition-all w-[160px] sm:w-[174px] shadow-xs border cursor-pointer ${
             isHighlighted
-              ? 'ring-4 ring-amber-400 border-amber-500 bg-amber-50/90 dark:bg-amber-950/90'
+              ? 'ring-2 ring-amber-400 border-amber-500 bg-amber-50/90 dark:bg-amber-950/90'
               : isTemporaryRoot
-              ? 'bg-gradient-to-b from-emerald-50 to-white dark:from-emerald-950 dark:to-neutral-900 border-emerald-500 ring-2 ring-emerald-400/40'
+              ? 'bg-gradient-to-b from-emerald-50 to-white dark:from-emerald-950 dark:to-neutral-900 border-2 border-emerald-500 shadow-sm'
               : 'bg-white dark:bg-neutral-900 border-neutral-200 dark:border-neutral-800 hover:border-emerald-400'
           }`}
           onClick={() => setSelectedMemberModal(member)}
         >
           {/* Header row: Position & ID */}
-          <div className="flex items-center justify-between gap-1 mb-2">
+          <div className="flex items-center justify-between gap-1 mb-1">
             <span
-              className={`text-2xs font-black px-2 py-0.5 rounded-md uppercase tracking-wider ${
+              className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-wider ${
                 isTemporaryRoot
                   ? 'bg-emerald-600 text-white'
                   : positionLabel === 'LEFT'
@@ -791,44 +852,41 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
             >
               {isCompanyMaster ? 'COMPANY ROOT' : isTemporaryRoot ? 'SELECTED ROOT' : positionLabel}
             </span>
-            <span className="text-xs font-mono font-black text-neutral-900 dark:text-neutral-100">
-              {member.id}
-            </span>
+            <span
+              className={`w-2 h-2 rounded-full shrink-0 ${
+                member.active ? 'bg-emerald-500' : 'bg-rose-500'
+              }`}
+              title={member.active ? 'Active' : 'Inactive'}
+            />
+          </div>
+
+          <div className="font-mono tabular-nums font-black text-[11px] text-neutral-900 dark:text-neutral-100 truncate">
+            {member.id}
           </div>
 
           {/* Member Name */}
-          <div className="font-bold text-sm text-neutral-900 dark:text-white truncate mb-2" title={member.fullName}>
+          <div className="font-bold text-xs text-neutral-800 dark:text-white truncate mb-1.5" title={member.fullName}>
             {member.fullName}
           </div>
 
-          {/* PV Metrics Grid */}
-          <div className="grid grid-cols-2 gap-1.5 p-2 bg-neutral-50 dark:bg-neutral-800/60 rounded-xl text-2xs mb-2">
-            <div>
-              <span className="text-neutral-500 block">Personal PV:</span>
-              <span className="font-bold text-neutral-900 dark:text-white">{(member.pv || 0).toLocaleString()}</span>
+          {/* Compact PV Grid */}
+          <div className="grid grid-cols-2 gap-1 px-1.5 py-1 bg-neutral-50 dark:bg-neutral-800/60 rounded-lg text-[10px] font-mono tabular-nums mb-1.5">
+            <div className="text-blue-700 dark:text-blue-300 font-bold truncate">
+              L: {(member.leftPV || 0).toLocaleString()}
             </div>
-            <div>
-              <span className="text-neutral-500 block">Total Matched:</span>
-              <span className="font-bold text-emerald-600 dark:text-emerald-400">{(member.totalMatchedPV || 0).toLocaleString()}</span>
+            <div className="text-indigo-700 dark:text-indigo-300 font-bold truncate text-right">
+              R: {(member.rightPV || 0).toLocaleString()}
             </div>
-            <div className="pt-1 border-t border-neutral-200 dark:border-neutral-700">
-              <span className="text-blue-600 dark:text-blue-400 block font-semibold">Left Team PV:</span>
-              <span className="font-mono font-bold text-neutral-900 dark:text-white">
-                {(member.leftPV || 0).toLocaleString()}
-              </span>
-              <span className="text-2xs text-neutral-400 block">CF: {(member.leftCarryForward || 0).toLocaleString()}</span>
+            <div className="text-neutral-600 dark:text-neutral-400 truncate">
+              PV: {(member.pv || 0).toLocaleString()}
             </div>
-            <div className="pt-1 border-t border-neutral-200 dark:border-neutral-700">
-              <span className="text-indigo-600 dark:text-indigo-400 block font-semibold">Right Team PV:</span>
-              <span className="font-mono font-bold text-neutral-900 dark:text-white">
-                {(member.rightPV || 0).toLocaleString()}
-              </span>
-              <span className="text-2xs text-neutral-400 block">CF: {(member.rightCarryForward || 0).toLocaleString()}</span>
+            <div className="text-emerald-600 dark:text-emerald-400 font-bold truncate text-right">
+              M: {(member.totalMatchedPV || 0).toLocaleString()}
             </div>
           </div>
 
           {/* Quick Actions Row */}
-          <div className="flex items-center justify-between text-2xs pt-1 border-t border-neutral-100 dark:border-neutral-800">
+          <div className="flex items-center justify-between text-[10px] pt-1 border-t border-neutral-100 dark:border-neutral-800">
             <button
               type="button"
               onClick={(e) => {
@@ -867,45 +925,41 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
             </button>
           </div>
 
-          {/* Expand / Collapse Button if node has children */}
-          {hasChildren && (
+          {/* Expand / Collapse Button (shown in Full Downline mode) */}
+          {!treeFocus3Only && hasChildren && (
             <button
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
                 toggleNodeExpansion(member.id);
               }}
-              className="absolute -bottom-3 left-1/2 -translate-x-1/2 w-6 h-6 rounded-full bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 flex items-center justify-center text-neutral-700 dark:text-neutral-300 hover:bg-emerald-50 shadow-xs cursor-pointer z-10"
+              className="absolute -bottom-2.5 left-1/2 -translate-x-1/2 w-5 h-5 rounded-full bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 flex items-center justify-center text-neutral-700 dark:text-neutral-300 hover:bg-emerald-50 shadow-xs cursor-pointer z-10"
               title={isExpanded ? 'সংকোচন করুন (Collapse)' : 'সম্প্রসারণ করুন (Expand)'}
             >
-              {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              {isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
             </button>
           )}
         </div>
 
-        {/* Tree Connectors & Children */}
-        {hasChildren && isExpanded && (
-          <div className="flex flex-col items-center mt-3">
-            {/* Vertical stem down from parent */}
-            <div className="w-0.5 h-6 bg-neutral-300 dark:bg-neutral-700" />
+        {/* Tight Tree Connectors & Children */}
+        {showChildren && (
+          <div className="flex flex-col items-center mt-1">
+            {/* Short vertical stem down from parent */}
+            <div className="w-0.5 h-3 bg-neutral-300 dark:bg-neutral-700" />
 
-            {/* Horizontal branch line connecting left and right */}
+            {/* Compact horizontal branch connecting left and right */}
             <div className="flex items-start">
-              {/* Left Subtree (Registered Member or Pre-Reserved Left Blank Position) */}
-              <div className="flex flex-col items-center px-4 relative">
-                {/* Horizontal line to left */}
-                <div className="absolute top-0 right-1/2 w-full h-0.5 bg-neutral-300 dark:bg-neutral-700 translate-x-1/2" />
-                {/* Vertical stem down to left child */}
-                <div className="w-0.5 h-6 bg-neutral-300 dark:bg-neutral-700 z-1" />
+              {/* Left Subtree */}
+              <div className="flex flex-col items-center px-1.5 sm:px-2 relative">
+                <div className="absolute top-0 left-1/2 right-0 h-0.5 bg-neutral-300 dark:bg-neutral-700" />
+                <div className="w-0.5 h-3 bg-neutral-300 dark:bg-neutral-700 z-1" />
                 {renderTreeNode(leftTargetId, 'LEFT', depth + 1)}
               </div>
 
-              {/* Right Subtree (Registered Member or Pre-Reserved Right Blank Position) */}
-              <div className="flex flex-col items-center px-4 relative">
-                {/* Horizontal line to right */}
-                <div className="absolute top-0 left-1/2 w-full h-0.5 bg-neutral-300 dark:bg-neutral-700 -translate-x-1/2" />
-                {/* Vertical stem down to right child */}
-                <div className="w-0.5 h-6 bg-neutral-300 dark:bg-neutral-700 z-1" />
+              {/* Right Subtree */}
+              <div className="flex flex-col items-center px-1.5 sm:px-2 relative">
+                <div className="absolute top-0 left-0 right-1/2 h-0.5 bg-neutral-300 dark:bg-neutral-700" />
+                <div className="w-0.5 h-3 bg-neutral-300 dark:bg-neutral-700 z-1" />
                 {renderTreeNode(rightTargetId, 'RIGHT', depth + 1)}
               </div>
             </div>
@@ -1017,6 +1071,20 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
             <FileText className="w-4 h-4" />
             <span>রিপোর্টস ও এক্সপোর্ট (Reports)</span>
           </button>
+
+          <button
+            type="button"
+            id="tab-btn-migration-email"
+            onClick={() => setActiveTab('migration_email')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
+              activeTab === 'migration_email'
+                ? 'bg-emerald-500 text-white shadow-xs'
+                : 'text-emerald-100/80 hover:text-white hover:bg-white/10'
+            }`}
+          >
+            <Mail className="w-4 h-4" />
+            <span>Migration & Email Queue</span>
+          </button>
         </div>
       </div>
 
@@ -1104,10 +1172,10 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
 
             <div className="text-[11px] text-neutral-500 dark:text-neutral-400 flex flex-wrap items-center justify-between gap-2">
               <span>
-                উদাহরণ: <code className="font-mono font-bold text-neutral-700 dark:text-neutral-300">GBD000001</code>,{' '}
-                <code className="font-mono font-bold text-neutral-700 dark:text-neutral-300">GBD000002</code>,{' '}
-                <code className="font-mono font-bold text-neutral-700 dark:text-neutral-300">GBD000004</code>,{' '}
-                <code className="font-mono font-bold text-neutral-700 dark:text-neutral-300">GBD000008</code> — শুধুমাত্র নির্বাচিত ID-এর অধীনস্থ নেটওয়ার্কই প্রদর্শিত হবে।
+                উদাহরণ: <code className="font-mono font-bold text-neutral-700 dark:text-neutral-300">AB-1000000001</code>,{' '}
+                <code className="font-mono font-bold text-neutral-700 dark:text-neutral-300">AB-1000000002</code>,{' '}
+                <code className="font-mono font-bold text-neutral-700 dark:text-neutral-300">AB-1000000004</code>,{' '}
+                <code className="font-mono font-bold text-neutral-700 dark:text-neutral-300">AB-1000000007</code> — শুধুমাত্র নির্বাচিত ID-এর অধীনস্থ নেটওয়ার্কই প্রদর্শিত হবে।
               </span>
             </div>
 
@@ -1181,8 +1249,37 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
               </select>
             </div>
 
-            {/* Canvas Actions: Zoom, Reset, Expand All, Collapse All */}
+            {/* Canvas Actions: 3-Node Focus vs Full Downline Toggle, Zoom, Expand/Collapse */}
             <div className="flex items-center gap-1.5 flex-wrap">
+              <div className="flex items-center bg-neutral-100 dark:bg-neutral-800 rounded-xl p-0.5 border border-neutral-200 dark:border-neutral-700">
+                <button
+                  type="button"
+                  data-testid="btn-tree-mode-focus3"
+                  onClick={() => handleSwitchTreeMode(true)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold inline-flex items-center gap-1 cursor-pointer transition-colors ${
+                    treeFocus3Only
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'text-neutral-700 dark:text-neutral-300 hover:bg-white/70 dark:hover:bg-neutral-700'
+                  }`}
+                >
+                  <Focus className="w-3.5 h-3.5" />
+                  <span>3-Node Focus</span>
+                </button>
+                <button
+                  type="button"
+                  data-testid="btn-tree-mode-downline"
+                  onClick={() => handleSwitchTreeMode(false)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold inline-flex items-center gap-1 cursor-pointer transition-colors ${
+                    !treeFocus3Only
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'text-neutral-700 dark:text-neutral-300 hover:bg-white/70 dark:hover:bg-neutral-700'
+                  }`}
+                >
+                  <Network className="w-3.5 h-3.5" />
+                  <span>Full Downline</span>
+                </button>
+              </div>
+
               <div className="flex items-center bg-neutral-100 dark:bg-neutral-800 rounded-xl p-1 border border-neutral-200 dark:border-neutral-700">
                 <button
                   type="button"
@@ -1216,38 +1313,45 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
                 </button>
               </div>
 
-              <button
-                type="button"
-                onClick={expandAllNodes}
-                className="px-2.5 py-1.5 bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-200 rounded-xl text-neutral-700 dark:text-neutral-300 font-medium cursor-pointer"
-              >
-                Expand All
-              </button>
-              <button
-                type="button"
-                onClick={collapseAllNodes}
-                className="px-2.5 py-1.5 bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-200 rounded-xl text-neutral-700 dark:text-neutral-300 font-medium cursor-pointer"
-              >
-                Collapse All
-              </button>
+              {!treeFocus3Only && (
+                <>
+                  <button
+                    type="button"
+                    onClick={expandAllNodes}
+                    className="px-2.5 py-1.5 bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-200 rounded-xl text-neutral-700 dark:text-neutral-300 font-medium cursor-pointer"
+                  >
+                    Expand All
+                  </button>
+                  <button
+                    type="button"
+                    onClick={collapseAllNodes}
+                    className="px-2.5 py-1.5 bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-200 rounded-xl text-neutral-700 dark:text-neutral-300 font-medium cursor-pointer"
+                  >
+                    Collapse All
+                  </button>
+                </>
+              )}
             </div>
           </div>
 
-          {/* Interactive Tree Viewport */}
+          {/* Compact Tree Status Legend */}
+          <BinaryTreeLegend compact={true} />
+
+          {/* Interactive Compact Tree Viewport (Fits cleanly on 1366x768 & 1920x1080) */}
           <div
             ref={treeContainerRef}
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
             onMouseLeave={handleMouseUp}
-            className="relative bg-neutral-100/70 dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800 rounded-3xl min-h-[580px] overflow-auto select-none cursor-grab active:cursor-grabbing p-8 flex justify-center"
+            className="relative bg-neutral-100/70 dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800 rounded-2xl min-h-[340px] overflow-auto select-none cursor-grab active:cursor-grabbing p-3 sm:p-4 flex justify-center"
           >
             {/* Background Grid Pattern */}
             <div
               className="absolute inset-0 opacity-20 pointer-events-none"
               style={{
                 backgroundImage: 'radial-gradient(circle, #888 1px, transparent 1px)',
-                backgroundSize: '24px 24px'
+                backgroundSize: '20px 20px'
               }}
             />
 
@@ -1267,7 +1371,7 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
                   transformOrigin: 'top center',
                   transition: isDragging ? 'none' : 'transform 0.15s ease-out'
                 }}
-                className="inline-block py-6 relative z-10"
+                className="inline-block py-2 relative z-10"
               >
                 {renderTreeNode(activeFocusMember.id, 'ROOT', 0)}
               </div>
@@ -1444,15 +1548,40 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
                   উভয় লেগে ক্যারি ফরোয়ার্ড পয়েন্ট থাকা সকল মেম্বারের জন্য এক ক্লিকে অফিশিয়াল ম্যাচিং সাইকেল হিসাব ও রেকর্ড করুন।
                 </p>
 
-                <button
-                  type="button"
-                  onClick={handleExecuteBatchMatching}
-                  disabled={isProcessingMatching}
-                  className="w-full py-2.5 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white font-bold rounded-xl text-xs shadow-xs flex items-center justify-center gap-2 cursor-pointer transition-all"
-                >
-                  <RefreshCw className={`w-4 h-4 ${isProcessingMatching ? 'animate-spin' : ''}`} />
-                  <span>ব্যাচ ম্যাচিং সাইকেল রান করুন</span>
-                </button>
+                {!confirmBatchMatching ? (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmBatchMatching(true)}
+                    disabled={isProcessingMatching}
+                    className="w-full py-2.5 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white font-bold rounded-xl text-xs shadow-xs flex items-center justify-center gap-2 cursor-pointer transition-all"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${isProcessingMatching ? 'animate-spin' : ''}`} />
+                    <span>ব্যাচ ম্যাচিং সাইকেল রান করুন</span>
+                  </button>
+                ) : (
+                  <div className="space-y-2 p-2.5 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700 rounded-xl">
+                    <p className="text-[11px] font-bold text-amber-900 dark:text-amber-200">
+                      সম্পূর্ণ নেটওয়ার্কের জন্য বাইনারি ম্যাচিং সাইকেল চালাতে নিশ্চিত করুন:
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleExecuteBatchMatching}
+                        disabled={isProcessingMatching}
+                        className="flex-1 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-[11px] cursor-pointer"
+                      >
+                        নিশ্চিত করুন
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmBatchMatching(false)}
+                        className="px-3 py-1.5 bg-neutral-200 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 font-bold rounded-lg text-[11px] cursor-pointer"
+                      >
+                        বাতিল
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Member KPI Summary */}
@@ -1620,7 +1749,7 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
               <span>সদস্য অনুসন্ধান ও সম্পর্ক নিরীক্ষণ (Member Relationship Search)</span>
             </h3>
             <p className="text-xs text-neutral-500 mb-4">
-              মেম্বার আইডি (যেমন <span className="font-mono font-bold text-emerald-600">GBD000001</span>), নাম বা মোবাইল নম্বর দিয়ে সার্চ করুন।
+              মেম্বার আইডি (যেমন <span className="font-mono font-bold text-emerald-600">AB-1000000001</span>), নাম বা মোবাইল নম্বর দিয়ে সার্চ করুন।
             </p>
 
             <form onSubmit={handleDedicatedMemberSearch} className="flex gap-2 max-w-xl">
@@ -1628,7 +1757,7 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
                 <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400" />
                 <input
                   type="text"
-                  placeholder="e.g. GBD000001, GBD000004, তাহমিনা..."
+                  placeholder="e.g. AB-1000000001, AB-1000000004, তাহমিনা..."
                   value={memberSearchQuery}
                   onChange={(e) => setMemberSearchQuery(e.target.value)}
                   className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800 text-xs font-medium text-neutral-900 dark:text-white"
@@ -1974,6 +2103,224 @@ export const SuperAdminBinaryMatchingManager: React.FC = () => {
                   ))}
                 </tbody>
               </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 6: ID MIGRATION REPORT & EMAIL QUEUE */}
+      {activeTab === 'migration_email' && (
+        <div className="space-y-5">
+          {migrationBanner && (
+            <div
+              role="status"
+              className={`p-3.5 rounded-2xl border text-xs font-bold flex items-center justify-between gap-2 ${
+                migrationBanner.type === 'success'
+                  ? 'bg-emerald-50 text-emerald-800 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-200 dark:border-emerald-800'
+                  : 'bg-rose-50 text-rose-800 border-rose-300 dark:bg-rose-950/60 dark:text-rose-200 dark:border-rose-800'
+              }`}
+            >
+              <span>{migrationBanner.text}</span>
+              <button
+                type="button"
+                onClick={() => setMigrationBanner(null)}
+                className="underline text-[11px] cursor-pointer"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+
+          {/* Header Controls */}
+          <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-2.5">
+              <Database className="w-5 h-5 text-emerald-600 shrink-0" />
+              <div>
+                <h3 className="font-bold text-sm text-neutral-900 dark:text-white">
+                  AB- Customer ID Migration Report & Email Delivery Queue
+                </h3>
+                <p className="text-[11px] text-neutral-500">
+                  Legacy GBD to AB-1000000001+ mapping ledger, PV conservation check, rollback, and SMTP retry queue.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={loadMigrationReport}
+                disabled={migrationLoading}
+                className="px-3 py-1.5 bg-neutral-100 hover:bg-neutral-200 dark:bg-neutral-800 dark:hover:bg-neutral-700 rounded-xl font-bold inline-flex items-center gap-1.5 cursor-pointer"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${migrationLoading ? 'animate-spin' : ''}`} />
+                <span>Refresh</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={async () => {
+                  setMigrationLoading(true);
+                  const res = await retryPendingEmails();
+                  setMigrationLoading(false);
+                  setMigrationBanner({
+                    type: res.success ? 'success' : 'error',
+                    text: res.message || `Processed ${res.processed ?? res.retriedCount ?? 0} queued email(s) (sent: ${res.sentCount ?? 0}).`
+                  });
+                  await loadMigrationReport();
+                }}
+                disabled={migrationLoading}
+                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold inline-flex items-center gap-1.5 cursor-pointer"
+              >
+                <Send className="w-3.5 h-3.5" />
+                <span>Retry Pending Emails</span>
+              </button>
+
+              {!confirmRollback ? (
+                <button
+                  type="button"
+                  onClick={() => setConfirmRollback(true)}
+                  className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl font-bold cursor-pointer"
+                >
+                  Rollback Migration
+                </button>
+              ) : (
+                <div className="inline-flex items-center gap-1.5 bg-rose-50 border border-rose-300 px-2.5 py-1 rounded-xl">
+                  <span className="text-[11px] font-bold text-rose-800">Restore pre-AB snapshot?</span>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setConfirmRollback(false);
+                      setMigrationLoading(true);
+                      const res = await rollbackMigration();
+                      setMigrationLoading(false);
+                      setMigrationBanner({
+                        type: res.success ? 'success' : 'error',
+                        text: res.message || (res.success ? 'Rollback completed.' : 'Rollback failed.')
+                      });
+                      await loadMigrationReport();
+                    }}
+                    className="px-2 py-0.5 bg-rose-600 text-white rounded font-bold text-[10px] cursor-pointer"
+                  >
+                    Confirm
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmRollback(false)}
+                    className="px-2 py-0.5 bg-white text-neutral-700 border rounded font-bold text-[10px] cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Summary KPI Strip */}
+          {migrationReportData && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+              <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl p-3.5">
+                <span className="text-[10px] text-neutral-500 font-semibold block">Total Migrated IDs</span>
+                <span className="text-lg font-black font-mono tabular-nums text-emerald-600">
+                  {migrationReportData.totalRegisteredMigrated}
+                </span>
+              </div>
+              <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl p-3.5">
+                <span className="text-[10px] text-neutral-500 font-semibold block">Blank Slots Preserved</span>
+                <span className="text-lg font-black font-mono tabular-nums text-blue-600">
+                  {migrationReportData.totalBlankSlotsConverted}
+                </span>
+              </div>
+              <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl p-3.5">
+                <span className="text-[10px] text-neutral-500 font-semibold block">Matching Records Updated</span>
+                <span className="text-lg font-black font-mono tabular-nums text-indigo-600">
+                  {migrationReportData.totalMatchingRecordsUpdated}
+                </span>
+              </div>
+              <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl p-3.5">
+                <span className="text-[10px] text-neutral-500 font-semibold block">PV Conservation Check</span>
+                <span className="text-sm font-black text-emerald-600">
+                  {migrationReportData.pvConserved ? 'VERIFIED (100%)' : 'MISMATCH'}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Mapping Ledger & Email Queue Tables */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs">
+            <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl overflow-hidden">
+              <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800 font-bold text-neutral-900 dark:text-white flex items-center justify-between">
+                <span>Legacy to AB- Customer ID Mappings</span>
+                <span className="font-mono text-[11px] text-neutral-500">{idMigrationMappings.length} entries</span>
+              </div>
+              <div className="max-h-72 overflow-y-auto">
+                <table className="w-full text-left">
+                  <thead className="bg-neutral-50 dark:bg-neutral-800/70 text-[10px] uppercase text-neutral-500">
+                    <tr>
+                      <th className="py-2 px-3">Legacy ID</th>
+                      <th className="py-2 px-3">Migrated AB- ID</th>
+                      <th className="py-2 px-3">Type</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-100 dark:divide-neutral-800 font-mono text-[11px]">
+                    {idMigrationMappings.map((mapping) => (
+                      <tr key={`${mapping.oldId}-${mapping.newId}`}>
+                        <td className="py-2 px-3 text-neutral-500">{mapping.oldId}</td>
+                        <td className="py-2 px-3 font-bold text-emerald-600 dark:text-emerald-400">{mapping.newId}</td>
+                        <td className="py-2 px-3 text-[10px] text-neutral-500 font-sans">{mapping.nodeType}</td>
+                      </tr>
+                    ))}
+                    {idMigrationMappings.length === 0 && (
+                      <tr>
+                        <td colSpan={3} className="py-6 text-center text-neutral-400 font-sans">No migration mappings found.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl overflow-hidden">
+              <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800 font-bold text-neutral-900 dark:text-white flex items-center justify-between">
+                <span>Email Delivery Logs</span>
+                <span className="font-mono text-[11px] text-neutral-500">{emailDeliveryLogs.length} logs</span>
+              </div>
+              <div className="max-h-72 overflow-y-auto">
+                <table className="w-full text-left">
+                  <thead className="bg-neutral-50 dark:bg-neutral-800/70 text-[10px] uppercase text-neutral-500">
+                    <tr>
+                      <th className="py-2 px-3">Customer ID</th>
+                      <th className="py-2 px-3">Recipient</th>
+                      <th className="py-2 px-3">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-100 dark:divide-neutral-800 text-[11px]">
+                    {emailDeliveryLogs.map((log) => (
+                      <tr key={log.id}>
+                        <td className="py-2 px-3 font-mono font-bold">{log.customerId}</td>
+                        <td className="py-2 px-3 truncate max-w-[160px]">{log.recipientEmail}</td>
+                        <td className="py-2 px-3">
+                          <span
+                            className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${
+                              log.status === 'sent'
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : log.status === 'failed'
+                                ? 'bg-rose-100 text-rose-800'
+                                : 'bg-amber-100 text-amber-800'
+                            }`}
+                          >
+                            {log.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                    {emailDeliveryLogs.length === 0 && (
+                      <tr>
+                        <td colSpan={3} className="py-6 text-center text-neutral-400">No registration emails queued yet.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         </div>

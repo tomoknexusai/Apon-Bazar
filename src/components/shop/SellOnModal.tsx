@@ -1,6 +1,6 @@
 /**
- * Sell On Ghorer Bazar (Vendor / Merchant / Dealer Onboarding Modal)
- * Project: ঘরের বাজার বিডি (Ghorer Bazar BD)
+ * Sell On Apon Bazar (Vendor / Merchant / Dealer Onboarding Modal)
+ * Project: APON BAZAR (আপন বাজার)
  */
 
 import React from 'react';
@@ -84,7 +84,7 @@ export const SellOnModal: React.FC<SellOnModalProps> = ({
                   {language === 'bn' ? 'মার্চেন্ট / ডিলার প্রোগ্রাম' : 'Merchant Partner Program'}
                 </span>
                 <h3 className="text-lg font-black tracking-tight mt-0.5">
-                  {language === 'bn' ? 'TOMSHOPBD-এ সেলার হন' : 'Sell On TOMSHOPBD'}
+                  {language === 'bn' ? 'APON BAZAR-এ সেলার হন' : 'Sell On APON BAZAR'}
                 </h3>
               </div>
             </div>

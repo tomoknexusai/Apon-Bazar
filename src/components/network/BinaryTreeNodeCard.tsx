@@ -232,19 +232,19 @@ export const EmptySlotCard: React.FC<EmptySlotCardProps> = ({
         >
           {isLeft ? 'LEFT BLANK (বাম শাখা)' : 'RIGHT BLANK (ডান শাখা)'}
         </span>
-        <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400">
-          {effectiveBlankId ? 'Reserved ID' : 'খালি স্লট'}
+        <span className="text-[10px] font-bold text-neutral-500 dark:text-neutral-400">
+          Empty Slot (No ID Burn)
         </span>
       </div>
 
       <div className="py-1">
         {effectiveBlankId && (
-          <div className="text-sm font-mono font-black text-indigo-700 dark:text-indigo-300 mb-0.5">
-            [{effectiveBlankId}]
+          <div className="text-[11px] font-mono font-bold text-neutral-600 dark:text-neutral-300 mb-0.5 truncate">
+            {effectiveBlankId}
           </div>
         )}
         <p className="text-xs font-bold text-neutral-700 dark:text-neutral-300">
-          {isLeft ? 'সংরক্ষিত বাম পজিশন (Left Blank)' : 'সংরক্ষিত ডান পজিশন (Right Blank)'}
+          {isLeft ? 'ফাঁকা বাম পজিশন (Left Slot)' : 'ফাঁকা ডান পজিশন (Right Slot)'}
         </p>
         <p className="text-[10px] text-neutral-500 dark:text-neutral-400 mt-0.5">
           Parent: <span className="font-mono font-bold text-emerald-600">{effectiveId}</span>

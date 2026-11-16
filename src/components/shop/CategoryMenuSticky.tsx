@@ -1,5 +1,5 @@
 /**
- * TOMSHOPBD — FIXED & STICKY CATEGORY MENU (ক্যাটাগরি মেনু)
+ * APON BAZAR — FIXED & STICKY CATEGORY MENU (ক্যাটাগরি মেনু)
  * Positioned directly above Hero Banner on the Homepage.
  * 
  * 1. Name: "ক্যাটাগরি মেনু (Category Menu)"
@@ -8,7 +8,7 @@
  * 4. Categories: Combos, Offer Zone, Honey, Oil & Ghee, Dates, Spices, Nuts & Seeds,
  *    Beverage, Rice, Flours & Lentils, Certified, Pickle, Grocery, Food & Beverage,
  *    Organic Products, Personal Care, Household, Electronics, Fashion.
- * 5. Desktop Design: Clean horizontal navigation with TOMSHOPBD green/light-green branding.
+ * 5. Desktop Design: Clean horizontal navigation with APON BAZAR green/light-green branding.
  * 6. Mobile Design: Horizontally scrollable, smooth touch navigation, no vertical overflow.
  */
 
@@ -281,7 +281,7 @@ export const CategoryMenuSticky: React.FC<CategoryMenuStickyProps> = ({
     }
     // Smooth scroll down to products section if clicked while hero banner is in view
     if (typeof window !== 'undefined') {
-      const productSection = document.getElementById('tomshopbd-main-catalog-section');
+      const productSection = document.getElementById('aponbazar-main-catalog-section');
       if (productSection) {
         const yOffset = -140;
         const y = productSection.getBoundingClientRect().top + window.pageYOffset + yOffset;
@@ -292,7 +292,7 @@ export const CategoryMenuSticky: React.FC<CategoryMenuStickyProps> = ({
 
   return (
     <nav
-      id="tomshopbd-fixed-category-menu"
+      id="aponbazar-fixed-category-menu"
       aria-label="ক্যাটাগরি মেনু (Category Menu)"
       className={`w-full bg-[#F4FAF6]/98 dark:bg-neutral-900/98 backdrop-blur-md border-t border-[#C8E6C9] dark:border-emerald-950/80 transition-shadow duration-200 ${
         isScrolledSticky ? 'shadow-sm' : ''

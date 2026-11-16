@@ -6,11 +6,33 @@
 import React, { useState } from 'react';
 import { useNetworkMarketing } from '../../context/NetworkMarketingContext';
 import { formatPV } from '../../lib/ecommerce-data';
-import { TrendingUp, BarChart3, Users, DollarSign, Award, Download, Calendar, Filter } from 'lucide-react';
+import { TrendingUp, BarChart3, Users, DollarSign, Download, CheckCircle2 } from 'lucide-react';
 
 export const NetworkReportsDashboard: React.FC = () => {
-  const { networkReports, currentMember } = useNetworkMarketing();
+  const { networkReports } = useNetworkMarketing();
   const [activeTab, setActiveTab] = useState<'growth' | 'commissions' | 'performers'>('growth');
+  const [exportMessage, setExportMessage] = useState<string | null>(null);
+
+  const handleExportCsv = () => {
+    const rows = [
+      ['Section', 'Period/Category', 'Count/Share', 'VolumePV', 'AmountBDT'],
+      ...networkReports.weeklyGrowth.map((w) => ['Weekly Growth', w.week, String(w.newMembers), String(w.totalPV), String(w.commissionPaid)]),
+      ...networkReports.monthlyGrowth.map((m) => ['Monthly Growth', m.month, String(m.newMembers), String(m.totalPV), String(m.commissionPaid)]),
+      ...networkReports.commissionBreakdown.map((c) => ['Commission Share', c.category, `${c.percentage}%`, '0', String(c.amount)])
+    ];
+    const csv = rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `aponbazar-network-report-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setExportMessage('রিপোর্ট CSV ডাউনলোড সম্পন্ন হয়েছে!');
+    setTimeout(() => setExportMessage(null), 4000);
+  };
 
   return (
     <div className="space-y-6 text-neutral-900 dark:text-neutral-100">
@@ -29,13 +51,20 @@ export const NetworkReportsDashboard: React.FC = () => {
 
         <button
           type="button"
-          onClick={() => alert('রিপোর্ট CSV ডাউনলোড শুরু হয়েছে!')}
-          className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white font-bold rounded-2xl text-xs border border-white/20 flex items-center gap-2 shadow-xs"
+          onClick={handleExportCsv}
+          className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white font-bold rounded-2xl text-xs border border-white/20 flex items-center gap-2 shadow-xs cursor-pointer"
         >
           <Download className="w-4 h-4 text-emerald-300" />
           <span>এক্সপোর্ট রিপোর্ট (Export CSV)</span>
         </button>
       </div>
+
+      {exportMessage && (
+        <div className="p-3 rounded-2xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 text-xs font-bold flex items-center gap-2">
+          <CheckCircle2 className="w-4 h-4 shrink-0" />
+          <span>{exportMessage}</span>
+        </div>
+      )}
 
       {/* Report Category Tabs */}
       <div className="flex items-center gap-2 border-b border-neutral-200 dark:border-neutral-800 pb-2 text-xs font-bold">

@@ -23,21 +23,41 @@ import {
   WithdrawalRequest,
   ReservedSlot,
   MatchingRecord,
+  EmailDeliveryRecord,
+  IdMigrationMapping,
+  IdMigrationReport,
+  CustomerDashboardSummary,
+  LegSummaryStats,
+  TokenLedgerSummary,
+  TokenTransaction,
+  WalletLedgerSummary,
   COMPANY_MASTER_ROOT_ID
 } from '../types/networkMarketing';
 import { calculateIdGrade } from '../lib/binaryNetworkEngine';
 import { INITIAL_MATCHING_HISTORY, SEED_BINARY_MEMBERS } from '../lib/seedBinaryMembers';
 import {
+  AB_ID_START_SEQ,
+  migrateLegacyTreePayloadToAB,
+  needsAbIdMigration
+} from '../lib/abIdMigrationEngine';
+import {
   BlankSlotRegistrationParams,
   BlankSlotRegistrationResult,
   IsolatedSubtreeStats,
+  PlacementParentInspectionResult,
+  ReferralValidationResult,
+  computeSubtreeLegStats,
   executeAtomicBlankSlotRegistration,
   extractIsolatedBinarySubtree,
+  findAutoBfsBinaryPlacement,
   findBinaryTreeNodeById,
   formatBinaryCompanyId,
+  inspectPlacementParentSlots,
   isCompanyIdInSubtree,
   parseBinaryCompanyIdSeq,
-  reconcileBinaryTreeState
+  reconcileBinaryTreeState,
+  searchPlacementParentCandidates,
+  validateReferralMember
 } from '../lib/binaryBlankPositionEngine';
 
 export interface IsolatedSubtreeApiResponse {
@@ -479,13 +499,21 @@ interface NetworkMarketingContextType {
   allTreeNodes: NetworkMember[];
   blankPositions: NetworkMember[];
   treeState: BinaryTreePersistenceState;
-  currentMember: NetworkMember;
+  currentMember: NetworkMember | null;
   ownCompanyMemberId: string | null;
   isNetworkActive: boolean;
   packages: ActivationPackage[];
   ranks: RankRequirement[];
   commissionConfig: CommissionConfig;
   wallets: UserWallets;
+  walletSummary: WalletLedgerSummary;
+  tokenSummary: TokenLedgerSummary;
+  tokenTransactions: TokenTransaction[];
+  legStats: { left: LegSummaryStats; right: LegSummaryStats; matchingPV: number };
+  customerDashboardSummary: CustomerDashboardSummary | null;
+  dashboardLoading: boolean;
+  dashboardError: string | null;
+  refreshCustomerDashboard: (targetCustomerId?: string) => Promise<void>;
   transactions: WalletTransaction[];
   withdrawals: WithdrawalRequest[];
   networkReports: NetworkReportData;
@@ -498,7 +526,99 @@ interface NetworkMarketingContextType {
   ) => Promise<BlankSlotRegistrationResult & { sponsorName?: string; placementName?: string }>;
   fetchIsolatedSubtree: (companyId: string) => Promise<IsolatedSubtreeApiResponse>;
   refreshBinaryTreeFromServer: () => Promise<void>;
-  activatePackage: (packageId: string) => void;
+  previewPlacementByReferral: (referralId: string) => Promise<{
+    found: boolean;
+    message: string;
+    referralId?: string;
+    referralName?: string;
+    placementId?: string;
+    placementName?: string;
+    position?: 'LEFT' | 'RIGHT';
+    leg?: 'left' | 'right';
+    blankSlotId?: string;
+  }>;
+  validateReferralOnServer: (referralId: string) => Promise<{
+    valid: boolean;
+    statusCode: number;
+    message: string;
+    referralId?: string;
+    referralName?: string;
+  }>;
+  inspectPlacementParentOnServer: (
+    parentId?: string,
+    query?: string
+  ) => Promise<{
+    found: boolean;
+    eligible: boolean;
+    statusCode: number;
+    message: string;
+    parentId?: string;
+    parentName?: string;
+    parentLevel?: number;
+    left?: PlacementParentInspectionResult['left'];
+    right?: PlacementParentInspectionResult['right'];
+    candidates: ReturnType<typeof searchPlacementParentCandidates>;
+  }>;
+  registerCustomerWithServer: (payload: {
+    referralId: string;
+    fullName: string;
+    mobile: string;
+    email: string;
+    address: string;
+    nidNumber: string;
+    password: string;
+    confirmPassword: string;
+    username?: string;
+    userId?: string;
+    packageId?: string;
+    packageName?: string;
+    pv?: number;
+    registrationSource?: string;
+    placementMode?: 'auto_bfs' | 'manual' | 'locked_slot';
+    placementMethod?: 'MANUAL' | 'AUTO_BFS';
+    placementId?: string;
+    placementPosition?: 'LEFT' | 'RIGHT' | 'left' | 'right';
+    slotId?: string;
+  }) => Promise<{
+    success: boolean;
+    statusCode: number;
+    message: string;
+    customerId?: string;
+    customerName?: string;
+    referralId?: string;
+    placementId?: string;
+    placementPosition?: 'LEFT' | 'RIGHT';
+    placementMethod?: 'MANUAL' | 'AUTO_BFS';
+    registrationDate?: string;
+    newLeftBlankId?: string;
+    newRightBlankId?: string;
+    emailStatus?: EmailDeliveryRecord['status'];
+    emailRecord?: EmailDeliveryRecord;
+    registeredMember?: NetworkMember;
+    treeState?: BinaryTreePersistenceState;
+  }>;
+  fetchMigrationAndEmailReport: () => Promise<{
+    success: boolean;
+    migrationReport?: IdMigrationReport;
+    idMigrationMappings?: IdMigrationMapping[];
+    emailDeliveryLogs?: EmailDeliveryRecord[];
+    message?: string;
+  }>;
+  retryPendingEmails: () => Promise<{
+    success: boolean;
+    processed?: number;
+    retriedCount?: number;
+    sentCount?: number;
+    pendingCount?: number;
+    failedCount?: number;
+    message?: string;
+  }>;
+  rollbackMigration: () => Promise<{ success: boolean; message?: string }>;
+  activatePackage: (
+    packageId: string,
+    paymentSource?: 'main_wallet' | 'payment_gateway' | 'admin_verified',
+    orderOrPaymentRef?: string
+  ) => Promise<{ success: boolean; message: string }>;
   addReservedSlot: (slot: Omit<ReservedSlot, 'id' | 'createdAt'>) => ReservedSlot;
   releaseReservedSlot: (parentMemberId: string, leg: 'left' | 'right') => void;
   reserveSlotDuringRegistration: (parentMemberId: string, leg: 'left' | 'right', customerName?: string) => string;
@@ -566,7 +686,7 @@ interface NetworkMarketingContextType {
 const NetworkMarketingContext = createContext<NetworkMarketingContextType | undefined>(undefined);
 
 export const NetworkMarketingProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { currentUser, activeRole, isLoggedIn, addAuditLog, systemSettings } = useAuth();
+  const { currentUser, activeRole, isLoggedIn, addAuditLog, systemSettings, setUserTokenBalance } = useAuth();
   const { addNotification } = useNotifications();
 
   const [treeState, setTreeState] = useState<BinaryTreePersistenceState>(() => {
@@ -575,11 +695,29 @@ export const NetworkMarketingProvider: React.FC<{ children: React.ReactNode }> =
       if (savedFull) {
         const parsedState = JSON.parse(savedFull) as BinaryTreePersistenceState;
         if (parsedState && Array.isArray(parsedState.nodes) && parsedState.nodes.length > 0) {
+          if (needsAbIdMigration(parsedState.nodes)) {
+            const mig = migrateLegacyTreePayloadToAB({
+              treeState: parsedState,
+              matchingHistory: INITIAL_MATCHING_HISTORY
+            });
+            return reconcileBinaryTreeState(
+              mig.treeState.nodes,
+              mig.treeState.lastCompanySeq || 16,
+              mig.treeState.allocatedIds || {},
+              mig.treeState.version || 1,
+              mig.treeState.lastAbCustomerSeq || AB_ID_START_SEQ,
+              mig.treeState.idMigrationMappings,
+              mig.report
+            );
+          }
           return reconcileBinaryTreeState(
             parsedState.nodes,
-            parsedState.lastCompanySeq || 15,
+            parsedState.lastCompanySeq || 16,
             parsedState.allocatedIds || {},
-            parsedState.version || 1
+            parsedState.version || 1,
+            parsedState.lastAbCustomerSeq || AB_ID_START_SEQ,
+            parsedState.idMigrationMappings,
+            parsedState.migrationReport
           );
         }
       }
@@ -590,34 +728,25 @@ export const NetworkMarketingProvider: React.FC<{ children: React.ReactNode }> =
       if (saved) {
         let parsed: NetworkMember[] = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          const hasGbdRoot = parsed.some((m) => m.id === 'GBD000001');
-          if (!hasGbdRoot) {
-            parsed = parsed.map((m) => ({
-              ...m,
-              id: m.id ? m.id.replace('TMK', 'GBD') : m.id,
-              member_id: m.id ? m.id.replace('TMK', 'GBD') : m.id,
-              sponsorId: m.sponsorId ? m.sponsorId.replace('TMK', 'GBD') : 'GBD000001',
-              sponsor_id: m.sponsor_id ? m.sponsor_id.replace('TMK', 'GBD') : 'GBD000001',
-              parentId: m.parentId ? m.parentId.replace('TMK', 'GBD') : undefined,
-              parent_id: m.parentId ? m.parentId.replace('TMK', 'GBD') : undefined,
-              binaryParentId: m.binaryParentId ? m.binaryParentId.replace('TMK', 'GBD') : undefined,
-              binary_parent_id: m.binary_parent_id ? m.binary_parent_id.replace('TMK', 'GBD') : undefined,
-              placementId: m.placementId ? m.placementId.replace('TMK', 'GBD') : undefined,
-              placement_id: m.placementId ? m.placementId.replace('TMK', 'GBD') : undefined,
-              leftChildId: m.leftChildId ? m.leftChildId.replace('TMK', 'GBD') : undefined,
-              rightChildId: m.rightChildId ? m.rightChildId.replace('TMK', 'GBD') : undefined
-            }));
-            if (!parsed.some((m) => m.id === 'GBD000001')) {
-              parsed = SEED_MEMBERS;
-            }
-          }
-          return reconcileBinaryTreeState(parsed, 15, {}, 1);
+          const mig = migrateLegacyTreePayloadToAB({
+            treeState: { nodes: parsed },
+            matchingHistory: INITIAL_MATCHING_HISTORY
+          });
+          return reconcileBinaryTreeState(
+            mig.treeState.nodes,
+            mig.treeState.lastCompanySeq || 16,
+            mig.treeState.allocatedIds || {},
+            1,
+            mig.treeState.lastAbCustomerSeq || AB_ID_START_SEQ,
+            mig.treeState.idMigrationMappings,
+            mig.report
+          );
         }
       }
     } catch (e) {
       console.error('Error loading binary tree state from localStorage', e);
     }
-    return reconcileBinaryTreeState(SEED_MEMBERS, 15, {}, 1);
+    return reconcileBinaryTreeState(SEED_MEMBERS, 16, {}, 1, AB_ID_START_SEQ);
   });
 
   const allTreeNodes = treeState.nodes;
@@ -689,7 +818,7 @@ export const NetworkMarketingProvider: React.FC<{ children: React.ReactNode }> =
     const resolvedOwnerId =
       currentUser?.binaryCompanyId ||
       allTreeNodes.find((n) => n.nodeStatus !== 'blank' && n.userId === effectiveUserId)?.id ||
-      (effectiveUserId === 'usr-network-07' ? 'GBD000002' : '');
+      (effectiveUserId === 'usr-network-07' ? 'AB-1000000002' : '');
 
     try {
       const resp = await fetch(`/api/network/tree/subtree/${encodeURIComponent(cleanId)}`, {
@@ -799,17 +928,38 @@ export const NetworkMarketingProvider: React.FC<{ children: React.ReactNode }> =
   const [packages, setPackages] = useState<ActivationPackage[]>(DEFAULT_PACKAGES);
   const [ranks, setRanks] = useState<RankRequirement[]>(DEFAULT_RANKS);
   const [commissionConfig, setCommissionConfig] = useState<CommissionConfig>(DEFAULT_COMMISSION_CONFIG);
-  
-  const [wallets, setWallets] = useState<UserWallets>({
-    mainWallet: 15400,
-    commissionWallet: 12500,
-    pendingCommissionWallet: 3500,
-    rewardWallet: 40000,
-    cashWallet: 2500
-  });
 
-  const [transactions, setTransactions] = useState<WalletTransaction[]>(INITIAL_TRANSACTIONS);
-  const [withdrawals, setWithdrawals] = useState<WithdrawalRequest[]>(INITIAL_WITHDRAWALS);
+  const ZERO_WALLETS: UserWallets = {
+    mainWallet: 0,
+    commissionWallet: 0,
+    pendingCommissionWallet: 0,
+    rewardWallet: 0,
+    cashWallet: 0
+  };
+  const ZERO_WALLET_SUMMARY: WalletLedgerSummary = {
+    openingBalance: 0,
+    totalCredit: 0,
+    totalDebit: 0,
+    availableBalance: 0,
+    pendingBalance: 0
+  };
+  const ZERO_TOKEN_SUMMARY: TokenLedgerSummary = {
+    openingBalance: 0,
+    totalCredit: 0,
+    totalDebit: 0,
+    balance: 0,
+    transactions: []
+  };
+
+  const [wallets, setWallets] = useState<UserWallets>(ZERO_WALLETS);
+  const [walletSummary, setWalletSummary] = useState<WalletLedgerSummary>(ZERO_WALLET_SUMMARY);
+  const [tokenSummary, setTokenSummary] = useState<TokenLedgerSummary>(ZERO_TOKEN_SUMMARY);
+  const [customerDashboardSummary, setCustomerDashboardSummary] = useState<CustomerDashboardSummary | null>(null);
+  const [dashboardLoading, setDashboardLoading] = useState<boolean>(false);
+  const [dashboardError, setDashboardError] = useState<string | null>(null);
+
+  const [transactions, setTransactions] = useState<WalletTransaction[]>([]);
+  const [withdrawals, setWithdrawals] = useState<WithdrawalRequest[]>([]);
   const [reservedPlacements, setReservedPlacements] = useState<ReservedSlot[]>([]);
 
   // Get active Company Master Member from settings (Fixed Company Master ID: GBD000001)
@@ -823,7 +973,17 @@ export const NetworkMarketingProvider: React.FC<{ children: React.ReactNode }> =
       );
       if (found && found.active) return found;
     }
-    return members.find((m) => m.id === 'GBD000001' || m.id === 'TMK000001' || m.id === 'AANO000001' || m.id === 'mem-root') || members[0];
+    return (
+      members.find(
+        (m) =>
+          m.id === COMPANY_MASTER_ROOT_ID ||
+          m.id === 'AB-1000000001' ||
+          m.id === 'GBD000001' ||
+          m.id === 'TMK000001' ||
+          m.id === 'AANO000001' ||
+          m.id === 'mem-root'
+      ) || members[0]
+    );
   };
 
   const validateReferId = (referIdInput?: string): { isValid: boolean; sponsor?: NetworkMember; message: string } => {
@@ -948,105 +1108,186 @@ export const NetworkMarketingProvider: React.FC<{ children: React.ReactNode }> =
     return tempId;
   };
 
-  // Derive Current Logged-in Network Member & Active Status
+  // Derive Current Logged-in Network Member & Active Status (NEVER fall back to another member!)
   const activeMemberMatch = currentUser
     ? members.find(
         (m) =>
           m.userId === currentUser.id ||
           (currentUser.binaryCompanyId && m.id === currentUser.binaryCompanyId) ||
-          (currentUser.id === 'usr-network-07' && m.id === 'GBD000002') ||
+          (currentUser.customerId && m.id === currentUser.customerId) ||
+          (currentUser.id === 'usr-network-07' && m.id === 'AB-1000000002') ||
           ((currentUser.primaryRole === 'super_admin' || currentUser.primaryRole === 'admin') &&
             m.id === COMPANY_MASTER_ROOT_ID)
       )
     : undefined;
-  const ownCompanyMemberId = activeMemberMatch?.id || currentUser?.binaryCompanyId || null;
-  const isNetworkActive = !!(activeMemberMatch && activeMemberMatch.active);
+  const ownCompanyMemberId =
+    activeMemberMatch?.id || currentUser?.binaryCompanyId || currentUser?.customerId || null;
+  const isNetworkActive = !!(
+    activeMemberMatch &&
+    activeMemberMatch.active !== false &&
+    activeMemberMatch.status !== 'inactive' &&
+    (activeMemberMatch.pv || 0) > 0
+  );
 
-  const currentMember = activeMemberMatch || members[1] || members[0];
+  const currentMember: NetworkMember | null = activeMemberMatch || null;
 
-  // ----------------------------------------------------------------------
-  // 1. Activate or Upgrade Activation Package
-  // ----------------------------------------------------------------------
-  const activatePackage = (packageId: string) => {
-    const pkg = packages.find((p) => p.id === packageId);
-    if (!pkg) return;
+  const legStats = React.useMemo(
+    () => computeSubtreeLegStats(members, currentMember?.id || ownCompanyMemberId),
+    [members, currentMember?.id, ownCompanyMemberId]
+  );
 
-    if (wallets.mainWallet < pkg.priceBDT) {
-      if (currentUser) {
-        addNotification({
-          userId: currentUser.id,
-          title: 'প্যাকেজ ক্রয় ব্যর্থ!',
-          message: `আপনার মেইন ওয়ালেটে পর্যাপ্ত ব্যালেন্স নেই। প্রয়োজন: ৳ ${pkg.priceBDT.toLocaleString()}`,
-          channel: 'in_app'
-        });
-      }
+  const refreshCustomerDashboard = async (explicitTargetId?: string) => {
+    const lookupId =
+      explicitTargetId ||
+      activeMemberMatch?.id ||
+      currentUser?.binaryCompanyId ||
+      currentUser?.customerId ||
+      currentUser?.id;
+
+    if (!isLoggedIn || !currentUser || !lookupId) {
+      setCustomerDashboardSummary(null);
+      setWallets(ZERO_WALLETS);
+      setWalletSummary(ZERO_WALLET_SUMMARY);
+      setTokenSummary(ZERO_TOKEN_SUMMARY);
+      setTransactions([]);
+      setWithdrawals([]);
+      setDashboardError(null);
       return;
     }
 
-    // Deduct Main Wallet
-    setWallets((prev) => ({
-      ...prev,
-      mainWallet: prev.mainWallet - pkg.priceBDT
-    }));
+    setDashboardLoading(true);
+    setDashboardError(null);
 
-    // Log Package Purchase Transaction
-    const tx: WalletTransaction = {
-      id: `tx-${Date.now()}`,
-      userId: currentUser?.id || 'guest',
-      walletType: 'main',
-      type: 'debit',
-      amount: pkg.priceBDT,
-      source: 'package_activation',
-      status: 'completed',
-      description: `নেটওয়ার্ক মার্কেটিং প্যাকেজ অ্যাক্টিভেশন: ${pkg.nameBn} (${pkg.pv} PV)`,
-      date: new Date().toISOString().replace('T', ' ').substring(0, 16)
-    };
-    setTransactions((prev) => [tx, ...prev]);
-
-    // Update Current Member PV & Package Name
-    setMembers((prev) =>
-      prev.map((m) => {
-        if (m.id === currentMember.id) {
-          const newPV = m.pv + pkg.pv;
-          return {
-            ...m,
-            pv: newPV,
-            packageId: pkg.id,
-            packageName: pkg.nameBn
-          };
+    try {
+      const effectiveRole = (activeRole || currentUser.primaryRole || 'customer').toLowerCase();
+      const resp = await fetch(`/api/network/customer-dashboard/${encodeURIComponent(lookupId)}`, {
+        cache: 'no-store',
+        headers: {
+          'x-user-role': effectiveRole,
+          'x-user-id': currentUser.id || 'guest',
+          'x-company-id': ownCompanyMemberId || ''
         }
-        return m;
-      })
-    );
+      });
 
-    // Calculate Direct Sponsor Commission for Sponsor if exists
-    if (currentMember.sponsorId) {
-      const sponsorCommBDT = Math.round(pkg.priceBDT * (commissionConfig.sponsorCommissionPct / 100));
-      const pendingTx: WalletTransaction = {
-        id: `tx-sp-${Date.now()}`,
-        userId: currentMember.sponsorId,
-        walletType: 'pending',
-        type: 'credit',
-        amount: sponsorCommBDT,
-        source: 'sponsor_commission',
-        status: 'pending',
-        description: `স্পন্সর ডাইরেক্ট রেফারেল কমিশন (${currentMember.fullName} - ${pkg.pv} PV)`,
-        date: new Date().toISOString().replace('T', ' ').substring(0, 16)
-      };
-      setTransactions((prev) => [pendingTx, ...prev]);
-      setWallets((prev) => ({
-        ...prev,
-        pendingCommissionWallet: prev.pendingCommissionWallet + sponsorCommBDT
-      }));
+      if (resp.status === 404) {
+        // Customer has not yet joined network tree or has no ledger transactions yet -> clean zero balances
+        setCustomerDashboardSummary(null);
+        setWallets(ZERO_WALLETS);
+        setWalletSummary(ZERO_WALLET_SUMMARY);
+        setTokenSummary(ZERO_TOKEN_SUMMARY);
+        setTransactions([]);
+        setWithdrawals([]);
+        setDashboardLoading(false);
+        return;
+      }
+
+      const data = await resp.json();
+      if (!resp.ok || !data?.success || !data.summary) {
+        setDashboardError(data?.message || 'ড্যাশবোর্ড তথ্য লোড করতে সমস্যা হয়েছে।');
+        setDashboardLoading(false);
+        return;
+      }
+
+      const summary = data.summary as CustomerDashboardSummary;
+      setCustomerDashboardSummary(summary);
+      setWallets(summary.wallets);
+      setWalletSummary(summary.walletSummary);
+      setTokenSummary(summary.tokenSummary);
+      setTransactions(summary.walletTransactions || []);
+      if (currentUser.id === summary.userId) {
+        setUserTokenBalance(currentUser.id, summary.tokenSummary.balance);
+      }
+      if (currentUser.id === 'usr-cust-001') {
+        setWithdrawals(INITIAL_WITHDRAWALS);
+      } else {
+        setWithdrawals([]);
+      }
+      setDashboardLoading(false);
+    } catch {
+      setDashboardError('সার্ভারের সাথে সংযোগ করতে সমস্যা হয়েছে।');
+      setDashboardLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    refreshCustomerDashboard();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoggedIn, currentUser?.id, activeRole, ownCompanyMemberId, treeState.version]);
+
+  // ----------------------------------------------------------------------
+  // 1. Activate or Upgrade Activation Package (Ledger + Binary Tree Persisted)
+  // ----------------------------------------------------------------------
+  const activatePackage = async (
+    packageId: string,
+    paymentSource: 'main_wallet' | 'payment_gateway' | 'admin_verified' = 'main_wallet',
+    orderOrPaymentRef?: string
+  ): Promise<{ success: boolean; message: string }> => {
+    const pkg = packages.find((p) => p.id === packageId);
+    if (!pkg) {
+      return { success: false, message: 'প্যাকেজ খুঁজে পাওয়া যায়নি।' };
+    }
+    const targetCustomerId = currentMember?.id || ownCompanyMemberId;
+    if (!currentUser || !targetCustomerId) {
+      return { success: false, message: 'প্যাকেজ অ্যাক্টিভ করতে আগে নেটওয়ার্ক আইডি সহ লগইন করুন।' };
     }
 
-    if (currentUser) {
+    try {
+      const effectiveRole = (activeRole || currentUser.primaryRole || 'customer').toLowerCase();
+      const resp = await fetch('/api/network/activate-package', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-role': effectiveRole,
+          'x-user-id': currentUser.id,
+          'x-company-id': targetCustomerId
+        },
+        body: JSON.stringify({
+          customerId: targetCustomerId,
+          packageId: pkg.id,
+          paymentSource,
+          orderOrPaymentRef
+        })
+      });
+      const json = await resp.json();
+      if (!resp.ok || !json?.success) {
+        addNotification({
+          userId: currentUser.id,
+          title: 'প্যাকেজ অ্যাক্টিভেশন ব্যর্থ!',
+          message: json?.message || 'অ্যাক্টিভেশন সম্পন্ন করা যায়নি।',
+          channel: 'in_app'
+        });
+        return {
+          success: false,
+          message: json?.message || 'অ্যাক্টিভেশন সম্পন্ন করা যায়নি।'
+        };
+      }
+
+      if (json.treeState) {
+        setTreeState(json.treeState);
+      }
+      if (json.summary) {
+        const summary = json.summary as CustomerDashboardSummary;
+        setCustomerDashboardSummary(summary);
+        setWallets(summary.wallets);
+        setWalletSummary(summary.walletSummary);
+        setTokenSummary(summary.tokenSummary);
+        setTransactions(summary.walletTransactions || []);
+      }
       addNotification({
         userId: currentUser.id,
         title: 'প্যাকেজ অ্যাক্টিভেশন সফল!',
-        message: `অভিনন্দন! আপনি সফলভাবে ${pkg.nameBn} অ্যাক্টিভেট করেছেন। +${pkg.pv} PV যুক্ত হয়েছে।`,
+        message: json.message || `অভিনন্দন! ${pkg.nameBn} অ্যাক্টিভেট হয়েছে।`,
         channel: 'in_app'
       });
+      return {
+        success: true,
+        message: json.message || `অভিনন্দন! ${pkg.nameBn} অ্যাক্টিভেট হয়েছে।`
+      };
+    } catch {
+      return {
+        success: false,
+        message: 'সার্ভারের সাথে সংযোগ বিচ্ছিন্ন থাকায় প্যাকেজ অ্যাক্টিভ করা যায়নি।'
+      };
     }
   };
 
@@ -1059,6 +1300,7 @@ export const NetworkMarketingProvider: React.FC<{ children: React.ReactNode }> =
 
     // Default company root sponsor alias handling
     if (
+      query === 'ab-1000000001' ||
       query === 'gbd000001' ||
       query === 'tmk000001' ||
       query === 'mem-root' ||
@@ -1194,8 +1436,8 @@ export const NetworkMarketingProvider: React.FC<{ children: React.ReactNode }> =
       );
     };
 
-    // Helper: Find first available slot in binary subtree under a given root
-    const findFirstAvailableSubtreeSlot = (startNode: NetworkMember, legPref: 'left' | 'right') => {
+    // Helper: Find first available slot in binary subtree under a given root using strict BFS (LEFT -> RIGHT)
+    const findFirstAvailableSubtreeSlot = (startNode: NetworkMember, legPref?: 'left' | 'right') => {
       const queue: NetworkMember[] = [startNode];
       const visited = new Set<string>();
       while (queue.length > 0) {
@@ -1203,20 +1445,18 @@ export const NetworkMarketingProvider: React.FC<{ children: React.ReactNode }> =
         if (visited.has(curr.id)) continue;
         visited.add(curr.id);
 
-        if (legPref === 'left') {
-          if (!curr.leftChildId) return { parent: curr, leg: 'left' as const, redirected: curr.id !== startNode.id };
-          if (!curr.rightChildId) return { parent: curr, leg: 'right' as const, redirected: true };
-        } else {
-          if (!curr.rightChildId) return { parent: curr, leg: 'right' as const, redirected: curr.id !== startNode.id };
-          if (!curr.leftChildId) return { parent: curr, leg: 'left' as const, redirected: true };
+        if (legPref === 'right' && curr.id === startNode.id && !curr.rightChildId) {
+          return { parent: curr, leg: 'right' as const, redirected: false };
         }
+        if (!curr.leftChildId) return { parent: curr, leg: 'left' as const, redirected: curr.id !== startNode.id };
+        if (!curr.rightChildId) return { parent: curr, leg: 'right' as const, redirected: curr.id !== startNode.id };
 
-        const firstChild = members.find((m) => m.id === (legPref === 'left' ? curr.leftChildId : curr.rightChildId));
-        const secondChild = members.find((m) => m.id === (legPref === 'left' ? curr.rightChildId : curr.leftChildId));
-        if (firstChild) queue.push(firstChild);
-        if (secondChild) queue.push(secondChild);
+        const leftChild = members.find((m) => m.id === curr.leftChildId);
+        const rightChild = members.find((m) => m.id === curr.rightChildId);
+        if (leftChild) queue.push(leftChild);
+        if (rightChild) queue.push(rightChild);
       }
-      return { parent: startNode, leg: legPref, redirected: false };
+      return { parent: startNode, leg: legPref || 'left', redirected: false };
     };
 
     // ------------------------------------------------------------------
@@ -1472,12 +1712,14 @@ export const NetworkMarketingProvider: React.FC<{ children: React.ReactNode }> =
   const registerBlankSlotAtomic = async (
     params: BlankSlotRegistrationParams
   ): Promise<BlankSlotRegistrationResult & { sponsorName?: string; placementName?: string }> => {
-    const pkg = packages.find((p) => p.id === (params.packageId || 'pkg-100')) || packages[0];
+    const activatePkg = Boolean(params.activateWithPackage && params.pv && params.pv > 0);
+    const pkg = activatePkg ? packages.find((p) => p.id === params.packageId) : undefined;
     const enrichedParams: BlankSlotRegistrationParams = {
       ...params,
-      packageId: pkg.id,
-      packageName: params.packageName || pkg.nameBn,
-      pv: typeof params.pv === 'number' ? params.pv : pkg.pv
+      activateWithPackage: activatePkg,
+      packageId: activatePkg ? (pkg?.id || params.packageId || '') : '',
+      packageName: activatePkg ? (params.packageName || pkg?.nameBn || '') : '',
+      pv: activatePkg ? (typeof params.pv === 'number' ? params.pv : pkg?.pv || 0) : 0
     };
 
     try {
@@ -1533,6 +1775,216 @@ export const NetworkMarketingProvider: React.FC<{ children: React.ReactNode }> =
     }
   };
 
+  const previewPlacementByReferral = async (referralId: string) => {
+    const cleanRef = (referralId || '').trim();
+    if (!cleanRef) {
+      return { found: false, message: 'রেফারেল আইডি (Referral ID) প্রদান করুন।' };
+    }
+    try {
+      const resp = await fetch(
+        `/api/network/placement/preview?referralId=${encodeURIComponent(cleanRef)}`,
+        { cache: 'no-store' }
+      );
+      const data = await resp.json();
+      if (data && typeof data.found === 'boolean') {
+        return data;
+      }
+    } catch {
+      // Fallback cleanly to deterministic local BFS computation
+    }
+    const localBfs = findAutoBfsBinaryPlacement(
+      allTreeNodes,
+      cleanRef,
+      treeState.idMigrationMappings
+    );
+    return {
+      found: localBfs.found,
+      message: localBfs.message,
+      referralId: localBfs.referralNode?.id,
+      referralName: localBfs.referralNode?.fullName,
+      placementId: localBfs.placementParentNode?.id,
+      placementName: localBfs.placementParentNode?.fullName,
+      position: localBfs.position,
+      leg: localBfs.leg,
+      blankSlotId: localBfs.blankSlotId
+    };
+  };
+
+  const validateReferralOnServer = async (referralId: string) => {
+    const cleanRef = (referralId || '').trim();
+    if (!cleanRef) {
+      return {
+        valid: false,
+        statusCode: 400,
+        message: 'অনুগ্রহ করে একটি বৈধ Referral ID প্রদান করুন।'
+      };
+    }
+    try {
+      const resp = await fetch(
+        `/api/network/referral/validate?referralId=${encodeURIComponent(cleanRef)}`,
+        { cache: 'no-store' }
+      );
+      const data = await resp.json();
+      if (data && typeof data.valid === 'boolean') {
+        return {
+          valid: data.valid,
+          statusCode: data.statusCode || resp.status,
+          message: data.message,
+          referralId: data.referralId,
+          referralName: data.referralName
+        };
+      }
+    } catch {
+      // Fallback to local verification
+    }
+    const localCheck: ReferralValidationResult = validateReferralMember(
+      allTreeNodes,
+      cleanRef,
+      treeState.idMigrationMappings
+    );
+    return {
+      valid: localCheck.valid,
+      statusCode: localCheck.statusCode,
+      message: localCheck.message,
+      referralId: localCheck.referralNode?.id,
+      referralName: localCheck.referralNode?.fullName
+    };
+  };
+
+  const inspectPlacementParentOnServer = async (parentId?: string, query?: string) => {
+    const cleanParent = (parentId || '').trim();
+    const cleanQuery = (query || '').trim();
+    try {
+      const params = new URLSearchParams();
+      if (cleanParent) params.set('parentId', cleanParent);
+      if (cleanQuery) params.set('q', cleanQuery);
+      const resp = await fetch(`/api/network/placement/inspect?${params.toString()}`, {
+        cache: 'no-store'
+      });
+      const data = await resp.json();
+      if (data && Array.isArray(data.candidates)) {
+        return {
+          found: Boolean(data.found),
+          eligible: Boolean(data.eligible),
+          statusCode: data.statusCode || resp.status,
+          message: data.message || '',
+          parentId: data.parentId,
+          parentName: data.parentName,
+          parentLevel: data.parentLevel,
+          left: data.left,
+          right: data.right,
+          candidates: data.candidates
+        };
+      }
+    } catch {
+      // Fallback cleanly to local inspection
+    }
+    const localInspection = cleanParent
+      ? inspectPlacementParentSlots(allTreeNodes, cleanParent, treeState.idMigrationMappings)
+      : null;
+    const candidates = searchPlacementParentCandidates(allTreeNodes, cleanQuery || cleanParent, 12);
+    return {
+      found: Boolean(localInspection?.found),
+      eligible: Boolean(localInspection?.eligible),
+      statusCode: localInspection?.statusCode || 200,
+      message: localInspection?.message || '',
+      parentId: localInspection?.parentId,
+      parentName: localInspection?.parentName,
+      parentLevel: localInspection?.parentLevel,
+      left: localInspection?.left,
+      right: localInspection?.right,
+      candidates
+    };
+  };
+
+  const registerCustomerWithServer = async (payload: {
+    referralId: string;
+    fullName: string;
+    mobile: string;
+    email: string;
+    address: string;
+    nidNumber: string;
+    password: string;
+    confirmPassword: string;
+    username?: string;
+    userId?: string;
+    packageId?: string;
+    packageName?: string;
+    pv?: number;
+    registrationSource?: string;
+    placementMode?: 'auto_bfs' | 'manual' | 'locked_slot';
+    placementMethod?: 'MANUAL' | 'AUTO_BFS';
+    placementId?: string;
+    placementPosition?: 'LEFT' | 'RIGHT' | 'left' | 'right';
+    slotId?: string;
+  }) => {
+    const effectiveRole = (activeRole || currentUser?.primaryRole || 'customer').toLowerCase();
+    const effectiveUserId = isLoggedIn ? (currentUser?.id || 'guest') : 'guest';
+    const resp = await fetch('/api/network/register-customer', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-user-role': effectiveRole,
+        'x-user-id': effectiveUserId,
+        'x-company-id': ownCompanyMemberId || ''
+      },
+      body: JSON.stringify(payload)
+    });
+    const json = await resp.json();
+    if (resp.ok && json?.success && json.treeState) {
+      setTreeState(json.treeState);
+    }
+    return {
+      ...json,
+      statusCode: json?.statusCode || resp.status
+    };
+  };
+
+  const fetchMigrationAndEmailReport = async () => {
+    const effectiveRole = (activeRole || currentUser?.primaryRole || 'customer').toLowerCase();
+    const effectiveUserId = isLoggedIn ? (currentUser?.id || 'guest') : 'guest';
+    const resp = await fetch('/api/network/migration-report', {
+      cache: 'no-store',
+      headers: {
+        'x-user-role': effectiveRole,
+        'x-user-id': effectiveUserId
+      }
+    });
+    return await resp.json();
+  };
+
+  const retryPendingEmails = async () => {
+    const effectiveRole = (activeRole || currentUser?.primaryRole || 'customer').toLowerCase();
+    const effectiveUserId = isLoggedIn ? (currentUser?.id || 'guest') : 'guest';
+    const resp = await fetch('/api/network/email-logs/retry', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-user-role': effectiveRole,
+        'x-user-id': effectiveUserId
+      }
+    });
+    return await resp.json();
+  };
+
+  const rollbackMigration = async () => {
+    const effectiveRole = (activeRole || currentUser?.primaryRole || 'customer').toLowerCase();
+    const effectiveUserId = isLoggedIn ? (currentUser?.id || 'guest') : 'guest';
+    const resp = await fetch('/api/network/migration/rollback', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-user-role': effectiveRole,
+        'x-user-id': effectiveUserId
+      }
+    });
+    const data = await resp.json();
+    if (data?.success) {
+      await refreshBinaryTreeFromServer();
+    }
+    return data;
+  };
+
   // ----------------------------------------------------------------------
   // 1.8 Complete AI Automatic Referral and Placement Engine
   // ----------------------------------------------------------------------
@@ -1583,7 +2035,7 @@ export const NetworkMarketingProvider: React.FC<{ children: React.ReactNode }> =
         referralCode: existingInTree.id,
         referralLink: `${window.location.origin}/register?ref=${existingInTree.id}`,
         sponsorId: existingInTree.sponsorId || COMPANY_MASTER_ROOT_ID,
-        sponsorName: existingInTree.sponsorName || 'Company Master (GBD000001)',
+        sponsorName: existingInTree.sponsorName || 'Company Master (AB-1000000001)',
         placementId: existingInTree.parentId,
         placementName: parentNode?.fullName || 'Root Upline',
         placementLeg: existingInTree.placementLeg,
@@ -1843,7 +2295,7 @@ export const NetworkMarketingProvider: React.FC<{ children: React.ReactNode }> =
           matchedPV += cappedMatch;
           totalPayoutBDT += payout;
 
-          if (m.id === currentMember.id) {
+          if (currentMember && m.id === currentMember.id) {
             // Award to pending commission wallet
             setWallets((w) => ({
               ...w,
@@ -1957,6 +2409,33 @@ export const NetworkMarketingProvider: React.FC<{ children: React.ReactNode }> =
     };
 
     setTransactions((prev) => [tx, ...prev]);
+
+    // Sync withdrawal debit to server ledger store
+    fetch('/api/network/wallet/withdrawal', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-user-role': (activeRole || currentUser.primaryRole || 'customer').toLowerCase(),
+        'x-user-id': currentUser.id,
+        'x-company-id': ownCompanyMemberId || ''
+      },
+      body: JSON.stringify({
+        customerId: ownCompanyMemberId || currentUser.id,
+        amount,
+        method,
+        accountDetails
+      })
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((json) => {
+        if (json?.summary) {
+          setCustomerDashboardSummary(json.summary);
+          setWallets(json.summary.wallets);
+          setWalletSummary(json.summary.walletSummary);
+          setTransactions(json.summary.walletTransactions || []);
+        }
+      })
+      .catch(() => undefined);
 
     addNotification({
       userId: currentUser.id,
@@ -2219,7 +2698,11 @@ export const NetworkMarketingProvider: React.FC<{ children: React.ReactNode }> =
 
     fetch('/api/network/placement/reassign', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-user-role': (activeRole || currentUser?.primaryRole || 'customer').toLowerCase(),
+        'x-user-id': currentUser?.id || 'guest'
+      },
       body: JSON.stringify({ targetMemberId, newBinaryParentId, newPosition, reason })
     })
       .then((r) => (r.ok ? r.json() : null))
@@ -2552,6 +3035,14 @@ export const NetworkMarketingProvider: React.FC<{ children: React.ReactNode }> =
         ranks,
         commissionConfig,
         wallets,
+        walletSummary,
+        tokenSummary,
+        tokenTransactions: tokenSummary.transactions,
+        legStats,
+        customerDashboardSummary,
+        dashboardLoading,
+        dashboardError,
+        refreshCustomerDashboard,
         transactions,
         withdrawals,
         networkReports,
@@ -2560,6 +3051,13 @@ export const NetworkMarketingProvider: React.FC<{ children: React.ReactNode }> =
         registerBlankSlotAtomic,
         fetchIsolatedSubtree,
         refreshBinaryTreeFromServer,
+        previewPlacementByReferral,
+        validateReferralOnServer,
+        inspectPlacementParentOnServer,
+        registerCustomerWithServer,
+        fetchMigrationAndEmailReport,
+        retryPendingEmails,
+        rollbackMigration,
         activatePackage,
         addReservedSlot,
         releaseReservedSlot,

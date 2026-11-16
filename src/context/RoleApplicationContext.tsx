@@ -1,5 +1,5 @@
 /**
- * AANO BAZAR APPLICATION ROLE SYSTEM ENGINE
+ * APON BAZAR APPLICATION ROLE SYSTEM ENGINE
  * Comprehensive Management for:
  * 1. District Admin (Strictly 1 Active per District)
  * 2. Upazila Operational Officer (Strictly 1 Active per Upazila)
@@ -9,7 +9,7 @@
  * Application data is sensitive administrative information and is visible
  * EXCLUSIVELY to authorized Super Admin users.
  *
- * Project: আনো বাজার (AANO BAZAR)
+ * Project: আপন বাজার (APON BAZAR)
  */
 
 import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
@@ -108,7 +108,7 @@ const initialSeedApplications: RoleApplication[] = [
     fullName: 'তানজিনা রহমান',
     applicantName: 'তানজিনা রহমান',
     mobileNumber: '01711000002',
-    email: 'tanjina.admin@tomshopbd.com',
+    email: 'tanjina.admin@aponbazar.com',
     nationalId: '19942691234567892',
     dateOfBirth: '1994-05-20',
     gender: 'female',
@@ -160,7 +160,7 @@ const initialSeedApplications: RoleApplication[] = [
     fullName: 'ফরিদা পারভীন',
     applicantName: 'ফরিদা পারভীন',
     mobileNumber: '01611000005',
-    email: 'farida.ops@tomshopbd.com',
+    email: 'farida.ops@aponbazar.com',
     nationalId: '19912691234567895',
     dateOfBirth: '1991-03-30',
     gender: 'female',
@@ -207,7 +207,7 @@ const initialSeedApplications: RoleApplication[] = [
     fullName: 'রাশেদুল হাসান',
     applicantName: 'রাশেদুল হাসান',
     mobileNumber: '01511000006',
-    email: 'rashedul.del@tomshopbd.com',
+    email: 'rashedul.del@aponbazar.com',
     nationalId: '19982691234567896',
     dateOfBirth: '1998-09-18',
     gender: 'male',
@@ -272,7 +272,7 @@ const initialSeedApplications: RoleApplication[] = [
     educationalQualification: 'Masters in Economics, Rajshahi University',
     experienceYears: '6 Years',
     previousExperience: 'Business Development Manager at Agro Export Ltd.',
-    statementOfPurpose: 'I want to lead TOMSHOPBD operations across Khulna District as the District Admin.',
+    statementOfPurpose: 'I want to lead APON BAZAR operations across Khulna District as the District Admin.',
     documents: [
       { title: 'National ID Card', url: 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?auto=format&fit=crop&q=80&w=400', type: 'image/jpeg' },
       { title: 'Academic Certificate (Masters)', url: 'https://images.unsplash.com/photo-1544717305-2782549b5136?auto=format&fit=crop&q=80&w=400', type: 'application/pdf' }

@@ -55,11 +55,11 @@ export const FinanceReportsTab: React.FC<FinanceReportsTabProps> = ({ language }
       setIsExporting(false);
       // Simulate file download
       const element = document.createElement('a');
-      const file = new Blob([`TOMSHOPBD Financial Report: ${selectedReport}\nDate Generated: ${new Date().toISOString()}\nStatus: Verified and Audited`], {
+      const file = new Blob([`APON BAZAR Financial Report: ${selectedReport}\nDate Generated: ${new Date().toISOString()}\nStatus: Verified and Audited`], {
         type: 'text/plain'
       });
       element.href = URL.createObjectURL(file);
-      element.download = `TOMSHOPBD_${selectedReport}_${Date.now()}.${exportFormat}`;
+      element.download = `APON_BAZAR_${selectedReport}_${Date.now()}.${exportFormat}`;
       document.body.appendChild(element);
       element.click();
       document.body.removeChild(element);
@@ -172,7 +172,7 @@ export const FinanceReportsTab: React.FC<FinanceReportsTabProps> = ({ language }
           {/* Report Data Table Preview */}
           <div className="p-4 rounded-xl bg-slate-800/40 border border-slate-700/60 space-y-3">
             <div className="flex justify-between items-center text-xs text-slate-400">
-              <span>Organization: TOMSHOPBD DIGITAL LIMITED</span>
+              <span>Organization: APON BAZAR DIGITAL LIMITED</span>
               <span>Audit Clearance: Level 1 Enterprise</span>
             </div>
 

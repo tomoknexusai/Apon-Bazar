@@ -1,6 +1,6 @@
 /**
  * Master Product Entry & Edit Form Modal
- * Project: ঘরের বাজার বিডি (Ghorer Bazar BD)
+ * Project: APON BAZAR (আপন বাজার)
  * Strictly enforces Category -> Subcategory -> Brand dependent hierarchy & validation
  */
 
@@ -108,7 +108,7 @@ export const ProductEntryModal: React.FC<ProductEntryModalProps> = ({
   const [expiryDate, setExpiryDate] = useState(editProductData?.expiryDate || '');
 
   // Step 10: Location, Shop & Dealer Details
-  const userShopName = currentUser?.fullName ? `${currentUser.fullName} - ডিলার শপ` : 'TOMSHOPBD প্রাইম আউটলেট';
+  const userShopName = currentUser?.fullName ? `${currentUser.fullName} - ডিলার শপ` : 'APON BAZAR প্রাইম আউটলেট';
   const [shopName, setShopName] = useState(editProductData?.vendorShopName || userShopName);
   
   const userMarketName = currentUser?.mandatoryAddress?.marketBazar || markets[0]?.nameBn || 'মিরপুর ১০ কেন্দ্রীয় বাজার';

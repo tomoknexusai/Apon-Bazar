@@ -1,6 +1,6 @@
 /**
  * Level 2 Local Service Address Database Management Service
- * Project: Apon Somaj / Apon Bazar
+ * Project: APON BAZAR (আপন বাজার)
  * 
  * Centralized relational engine enforcing:
  * - Deterministic unique IDs for Division, District, Upazila, Union, Ward, and Local Places
@@ -909,7 +909,7 @@ export function exportLocalDatabaseToJSON(
   const exportPayload: LocalAddressDBExport = {
     version: '2.0.0',
     exportedAt: new Date().toISOString(),
-    companyName: 'Apon Somaj / Apon Bazar',
+    companyName: 'APON BAZAR',
     unions,
     wards,
     places

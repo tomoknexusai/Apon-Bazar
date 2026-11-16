@@ -1,5 +1,5 @@
 /**
- * Fast, Clean, Smart & Colorful Digital Hero Banner Carousel for "আনো বাজার (AANO BAZAR)"
+ * Fast, Clean, Smart & Colorful Digital Hero Banner Carousel for "আপন বাজার (APON BAZAR)"
  */
 
 import React, { useState, useEffect } from 'react';
@@ -66,7 +66,7 @@ const bannerSlides: BannerSlide[] = [
   },
   {
     id: 'banner-4',
-    titleBn: 'AI-পাওয়ার্ড কেনাকাটা ও TOMSHOPBD নেটওয়ার্ক আয়!',
+    titleBn: 'AI-পাওয়ার্ড কেনাকাটা ও APON BAZAR নেটওয়ার্ক আয়!',
     subtitleBn: 'প্রতিটি অর্ডারে আকর্ষণীয় PV ইনকাম পয়েন্ট, লাইভ ডেলিভারি ট্র্যাকিং ও ইনস্ট্যান্ট ক্যাশব্যাক',
     badgeBn: 'Smart Digital MLM',
     discountTag: 'ইনস্ট্যান্ট পয়েন্ট',

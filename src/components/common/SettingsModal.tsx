@@ -64,7 +64,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
                 {language === 'bn' ? 'অ্যাকাউন্ট সেটিংস ও পছন্দ' : 'Account Settings & Preferences'}
               </h2>
               <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                {currentUser.fullName} ({currentUser.permanentMemberId || 'ID: GBBD-100293'})
+                {currentUser.fullName} ({currentUser.binaryCompanyId || currentUser.customerId || currentUser.permanentMemberId || '—'})
               </p>
             </div>
           </div>

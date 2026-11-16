@@ -5,6 +5,7 @@
 
 import React, { useState } from 'react';
 import { useNetworkMarketing } from '../../context/NetworkMarketingContext';
+import { COMPANY_MASTER_ROOT_ID } from '../../types/networkMarketing';
 import { X, UserPlus, CheckCircle2, ShieldCheck } from 'lucide-react';
 
 interface Props {
@@ -30,7 +31,7 @@ export const PlacementManagementModal: React.FC<Props> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name || !mobile) return;
-    placeMemberInTree(name, mobile, currentMember?.id || 'mem-root', parentId, leg, selectedPkgId);
+    placeMemberInTree(name, mobile, currentMember?.id || COMPANY_MASTER_ROOT_ID, parentId, leg, selectedPkgId);
     onClose();
   };
 

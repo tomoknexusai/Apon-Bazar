@@ -288,7 +288,7 @@ export const FinanceSettlementsTab: React.FC<FinanceSettlementsTabProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* Transaction Lifecycle Visualizer (AANO BAZAR 6-Step Delivery Protocol) */}
+      {/* Transaction Lifecycle Visualizer (APON BAZAR 6-Step Delivery Protocol) */}
       <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-slate-900 via-slate-900/95 to-slate-900 border border-emerald-500/30 shadow-xl space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2.5">

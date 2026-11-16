@@ -125,65 +125,55 @@ function sha256Sync(ascii: string): string {
   return result;
 }
 
+function generateRandomSalt(length = 16): string {
+  const chars = '0123456789abcdef';
+  if (typeof globalThis !== 'undefined' && globalThis.crypto && typeof globalThis.crypto.getRandomValues === 'function') {
+    const bytes = new Uint8Array(length);
+    globalThis.crypto.getRandomValues(bytes);
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  }
+  let out = '';
+  for (let i = 0; i < length * 2; i++) {
+    out += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return out;
+}
+
+function stretchedSaltedSha256(plainText: string, salt: string, rounds = 128): string {
+  let acc = `${salt}:${plainText}:aponbazar-v2`;
+  for (let r = 0; r < rounds; r++) {
+    acc = sha256Sync(`${acc}|${salt}|${r}`);
+  }
+  return acc;
+}
+
 /**
- * Securely hashes a plain text password using SHA-256
+ * Securely hashes a plain text password using salted stretched SHA-256
  */
 export async function hashPassword(plainText: string): Promise<string> {
   if (!plainText) return '';
-  const trimmed = plainText.trim();
-  if (typeof window !== 'undefined' && window.crypto && window.crypto.subtle) {
-    try {
-      const msgUint8 = new TextEncoder().encode(trimmed);
-      const hashBuffer = await window.crypto.subtle.digest('SHA-256', msgUint8);
-      const hashArray = Array.from(new Uint8Array(hashBuffer));
-      const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
-      return `sha256:${hashHex}`;
-    } catch (e) {
-      console.warn('Subtle crypto fallback to sync SHA-256', e);
-    }
-  }
-  return `sha256:${sha256Sync(trimmed)}`;
+  return hashPasswordSync(plainText);
 }
 
 /**
- * Synchronous hash helper for instant state creation
+ * Synchronous salted hash helper for instant state creation
  */
 export function hashPasswordSync(plainText: string): string {
   if (!plainText) return '';
-  return `sha256:${sha256Sync(plainText.trim())}`;
+  const trimmed = plainText.trim();
+  const salt = generateRandomSalt(12);
+  const digest = stretchedSaltedSha256(trimmed, salt);
+  return `s256$${salt}$${digest}`;
 }
 
 /**
- * Securely verifies a plain text password against stored hash or legacy plaintext
+ * Securely verifies a plain text password against stored salted/unsalted hash
  */
 export async function verifyPassword(
   inputPassword?: string,
   storedPasswordOrHash?: string
 ): Promise<boolean> {
-  if (!storedPasswordOrHash) return true; // If no password was configured on account
-  if (!inputPassword) return false;
-
-  const cleanInput = inputPassword.trim();
-  const cleanStored = storedPasswordOrHash.trim();
-
-  // 1. Direct match (plain text legacy/seed users)
-  if (cleanStored === cleanInput) return true;
-
-  // 2. Hash match
-  const hashedInput = await hashPassword(cleanInput);
-  if (cleanStored === hashedInput) return true;
-
-  // 3. Prefix stripped match
-  if (cleanStored.startsWith('sha256:')) {
-    const rawStored = cleanStored.replace('sha256:', '');
-    const rawComputed = sha256Sync(cleanInput);
-    if (rawStored === rawComputed) return true;
-  }
-
-  // 4. In case stored was raw hex hash without prefix
-  if (sha256Sync(cleanInput) === cleanStored) return true;
-
-  return false;
+  return verifyPasswordSync(inputPassword, storedPasswordOrHash);
 }
 
 /**
@@ -199,12 +189,23 @@ export function verifyPasswordSync(
   const cleanInput = inputPassword.trim();
   const cleanStored = storedPasswordOrHash.trim();
 
+  if (cleanStored.startsWith('s256$')) {
+    const parts = cleanStored.split('$');
+    if (parts.length !== 3) return false;
+    const [, salt, expectedDigest] = parts;
+    if (!salt || !expectedDigest) return false;
+    return stretchedSaltedSha256(cleanInput, salt) === expectedDigest;
+  }
+
+  if (cleanStored.startsWith('sha256:')) {
+    const rawStored = cleanStored.replace('sha256:', '');
+    return sha256Sync(cleanInput) === rawStored;
+  }
+
   if (cleanStored === cleanInput) return true;
 
   const computedRaw = sha256Sync(cleanInput);
-  if (cleanStored === `sha256:${computedRaw}`) return true;
   if (cleanStored === computedRaw) return true;
-  if (cleanStored.startsWith('sha256:') && cleanStored.replace('sha256:', '') === computedRaw) return true;
 
   return false;
 }

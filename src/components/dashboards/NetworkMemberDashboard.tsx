@@ -19,6 +19,8 @@ import { NetworkReportsDashboard } from '../network/NetworkReportsDashboard';
 import { CustomerRegistrationTable } from '../network/CustomerRegistrationTable';
 import { CustomerRegistrationModal } from '../auth/CustomerRegistrationModal';
 import { ProfileEditor } from '../profile/ProfileEditor';
+import { CustomerNetworkSummaryPanel } from '../network/CustomerNetworkSummaryPanel';
+import { COMPANY_MASTER_ROOT_ID } from '../../types/networkMarketing';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Network,
@@ -38,7 +40,7 @@ import {
 
 export const NetworkMemberDashboard: React.FC = () => {
   const { currentUser } = useAuth();
-  const { isNetworkActive } = useNetworkMarketing();
+  const { isNetworkActive, ownCompanyMemberId } = useNetworkMarketing();
   const { language, t } = useLanguage();
 
   const [activeTab, setActiveTab] = useState<'network' | 'store' | 'profile'>('network');
@@ -54,6 +56,8 @@ export const NetworkMemberDashboard: React.FC = () => {
         subtitle={language === 'bn' ? 'বাইনারি টিম ট্রিকোলজি, স্পন্সর ট্রি, পিন ব্যাক ওয়ালেট ও কমিশন পোর্টাল' : 'Binary tree structure, sponsor genealogy, MLM wallets & commission analytics'}
         icon={<Network className="w-6 h-6 text-emerald-300" />}
       />
+
+      <CustomerNetworkSummaryPanel />
 
       {/* Primary Navigation Tabs */}
       <div className="flex flex-wrap items-center justify-between gap-3 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-2 rounded-2xl shadow-xs">
@@ -249,7 +253,7 @@ export const NetworkMemberDashboard: React.FC = () => {
           onClose={() => setIsCustomerRegisterOpen(false)}
           source="dashboard"
           title="Customer Registration"
-          initialReferralId={currentUser?.customerId || 'TMK000001'}
+          initialReferralId={ownCompanyMemberId || currentUser?.customerId || COMPANY_MASTER_ROOT_ID}
         />
       )}
 

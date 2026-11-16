@@ -20,6 +20,7 @@ export interface CustomerRegistrationPayload {
   username: string;
   mobile: string;
   email?: string;
+  nidNumber?: string;
   password: string;
   confirmPassword?: string;
   passwordMode: 'normal' | 'strong';
@@ -115,7 +116,7 @@ export class CustomerRegistrationService {
 
   /**
    * Validates Refer ID
-   * If empty and source is dashboard or checkout, will default to COMPANY_MASTER_ROOT_ID (GBD000001)
+   * If empty and source is dashboard or checkout, will default to COMPANY_MASTER_ROOT_ID (AB-1000000001)
    */
   static validateReferId(
     referId: string,

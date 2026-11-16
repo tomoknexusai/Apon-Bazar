@@ -22,6 +22,8 @@ import { PackagesSection } from '../network/PackagesSection';
 import { RankRewardsViewer } from '../network/RankRewardsViewer';
 import { NetworkReportsDashboard } from '../network/NetworkReportsDashboard';
 import { ActivateNetworkModal } from '../network/ActivateNetworkModal';
+import { CustomerNetworkSummaryPanel } from '../network/CustomerNetworkSummaryPanel';
+import { COMPANY_MASTER_ROOT_ID } from '../../types/networkMarketing';
 import {
   ShoppingBag,
   Coins,
@@ -53,7 +55,7 @@ import { motion, AnimatePresence } from 'motion/react';
 export const CustomerDashboard: React.FC = () => {
   const { currentUser } = useAuth();
   const { orders } = useECommerce();
-  const { isNetworkActive } = useNetworkMarketing();
+  const { isNetworkActive, tokenSummary, ownCompanyMemberId } = useNetworkMarketing();
   const { language, t } = useLanguage();
 
   const customerOrders = orders.filter((o) => {
@@ -103,7 +105,7 @@ export const CustomerDashboard: React.FC = () => {
           <span>
             {language === 'bn' ? 'টোকেন ব্যালেন্স:' : 'Token Balance:'}{' '}
             <strong className="text-emerald-600 dark:text-emerald-400 font-mono text-sm">
-              {(currentUser?.tomokTokenBalance ?? 0).toLocaleString()} TOMOK
+              {(tokenSummary?.balance ?? currentUser?.tomokTokenBalance ?? 0).toLocaleString()} TOMOK
             </strong>
           </span>
         </div>
@@ -135,6 +137,9 @@ export const CustomerDashboard: React.FC = () => {
           )}
         </div>
       </div>
+
+      {/* 15-Field Audited Customer Network & Financial Summary */}
+      <CustomerNetworkSummaryPanel />
 
       {/* Network Marketing Activation Callout Banner if Customer is not yet Active */}
       {!isNetworkActive && (
@@ -505,7 +510,7 @@ export const CustomerDashboard: React.FC = () => {
           source="dashboard"
           title="কাস্টমার রেজিস্ট্রেশন (Customer Only)"
           subtitle="নতুন কাস্টমার একাউন্ট তৈরি করুন"
-          initialReferralId={currentUser?.customerId || 'TMK000001'}
+          initialReferralId={ownCompanyMemberId || currentUser?.customerId || COMPANY_MASTER_ROOT_ID}
         />
       )}
 

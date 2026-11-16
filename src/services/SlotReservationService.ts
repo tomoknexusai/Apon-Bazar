@@ -143,13 +143,8 @@ export class SlotReservationService {
       if (found) sponsor = found;
     }
 
-    // 2. Determine target leg (auto-balance volume or honor preferred)
-    let targetLeg: 'left' | 'right' = preferredLeg || 'right';
-    if (!preferredLeg) {
-      const leftVol = Number(sponsor.leftPV) || 0;
-      const rightVol = Number(sponsor.rightPV) || 0;
-      targetLeg = leftVol <= rightVol ? 'left' : 'right';
-    }
+    // 2. Determine target leg (default LEFT -> RIGHT BFS when preferredLeg not provided)
+    const targetLeg: 'left' | 'right' = preferredLeg || 'left';
 
     // 3. Search downline of sponsor for first slot that is BOTH physically empty and not reserved
     const queue: NetworkMember[] = [sponsor];
@@ -165,9 +160,8 @@ export class SlotReservationService {
       if (visited.has(current.id)) continue;
       visited.add(current.id);
 
-      // Check chosen preferred leg first on this node
-      const firstLeg = targetLeg;
-      const secondLeg = targetLeg === 'left' ? 'right' : 'left';
+      const firstLeg: 'left' | 'right' = current.id === sponsor.id && preferredLeg ? preferredLeg : 'left';
+      const secondLeg: 'left' | 'right' = firstLeg === 'left' ? 'right' : 'left';
 
       const firstCheck = this.isSlotAvailable(current.id, firstLeg, members, reservedPlacements);
       if (firstCheck.isAvailable) {
@@ -187,7 +181,7 @@ export class SlotReservationService {
         break;
       }
 
-      // Add children to queue
+      // Enqueue Left before Right for level-by-level BFS order
       if (current.leftChildId) {
         const leftNode = registeredMembers.find((m) => m.id === current.leftChildId);
         if (leftNode) queue.push(leftNode);
@@ -213,7 +207,7 @@ export class SlotReservationService {
       reservedCompanyId: chosenReservedCompanyId,
       statusText: 'Available',
       isAvailable: true,
-      reasonText: `AI Smart Placement has selected the optimal ${chosenPosition === 'left' ? 'Left' : 'Right'} slot under ${chosenParent.fullName} (${chosenParent.id})${chosenReservedCompanyId ? ` [Reserved ID: ${chosenReservedCompanyId}]` : ''} based on network balance.`
+      reasonText: `Auto BFS Placement selected ${chosenPosition.toUpperCase()} position under ${chosenParent.fullName} (${chosenParent.id}).`
     };
   }
 }

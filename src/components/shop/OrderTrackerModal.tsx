@@ -1,6 +1,6 @@
 /**
  * Redesigned Customer Order Details & Tracking Modal Component
- * Project: ঘরের বাজার বিডি (Ghorer Bazar BD)
+ * Project: APON BAZAR (আপন বাজার)
  */
 
 import React, { useState } from 'react';
@@ -512,7 +512,7 @@ export const OrderTrackerModal: React.FC<OrderTrackerModalProps> = ({
                       সোর্স আউটলেট/ওয়্যারহাউজ:
                     </span>
                     <h5 className="font-bold text-neutral-900 dark:text-white">
-                      {activeOrder.logistics.vendorShopName || 'TOMSHOPBD ওয়্যারহাউজ'}
+                      {activeOrder.logistics.vendorShopName || 'APON BAZAR ওয়্যারহাউজ'}
                     </h5>
                     <p className="text-[11px] text-neutral-500">
                       {activeOrder.logistics.hubAddress}

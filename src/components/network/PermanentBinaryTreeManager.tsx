@@ -79,6 +79,7 @@ export const PermanentBinaryTreeManager: React.FC = () => {
 
   // Daily matching result state
   const [matchingResult, setMatchingResult] = useState<{ matchedPV: number; totalPayoutBDT: number } | null>(null);
+  const [uiNotice, setUiNotice] = useState<string | null>(null);
 
   // Find member helper
   const getMemberById = (id?: string): NetworkMember | undefined => {
@@ -136,20 +137,21 @@ export const PermanentBinaryTreeManager: React.FC = () => {
         (m.email && m.email.toLowerCase().includes(query))
     );
     if (match) {
+      setUiNotice(null);
       setFocusMemberId(match.id);
     } else {
-      alert('সদস্য পাওয়া যায়নি! অনুগ্রহ করে সঠিক মেম্বার আইডি বা মোবাইল নম্বর লিখুন।');
+      setUiNotice('সদস্য পাওয়া যায়নি! অনুগ্রহ করে সঠিক মেম্বার আইডি বা মোবাইল নম্বর লিখুন।');
     }
   };
 
   // Open Reassign Modal
   const handleOpenReassignModal = (member: NetworkMember) => {
     if (!isSuperAdmin) {
-      alert('অননুমোদিত: শুধুমাত্র সুপার এডমিন পারমানেন্ট বাইনারি প্লেসমেন্ট পরিবর্তন করতে পারেন।');
+      setUiNotice('অননুমোদিত: শুধুমাত্র সুপার এডমিন পারমানেন্ট বাইনারি প্লেসমেন্ট পরিবর্তন করতে পারেন।');
       return;
     }
     if (member.id === COMPANY_MASTER_ROOT_ID || member.id === 'TMK000001' || !member.parentId) {
-      alert('কোম্পানি রুট নোড (Root Node) স্থানান্তর করা সম্ভব নয়।');
+      setUiNotice('কোম্পানি রুট নোড (Root Node) স্থানান্তর করা সম্ভব নয়।');
       return;
     }
     setTargetMemberForReassign(member);
@@ -251,6 +253,20 @@ export const PermanentBinaryTreeManager: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* UI Notice Banner */}
+      {uiNotice && (
+        <div className="p-3 bg-rose-50 dark:bg-rose-950/60 border border-rose-300 dark:border-rose-700 rounded-2xl text-xs text-rose-800 dark:text-rose-200 flex items-center justify-between">
+          <span className="font-bold">{uiNotice}</span>
+          <button
+            type="button"
+            onClick={() => setUiNotice(null)}
+            className="text-rose-600 dark:text-rose-300 font-bold hover:underline px-2"
+          >
+            বন্ধ করুন
+          </button>
+        </div>
+      )}
 
       {/* Matching Notification Toast */}
       {matchingResult && (

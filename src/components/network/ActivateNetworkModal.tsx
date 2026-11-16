@@ -1,6 +1,6 @@
 /**
  * Activate Network Marketing Modal Component
- * Project: ঘরের বাজার বিডি (Ghorer Bazar BD)
+ * Project: APON BAZAR (আপন বাজার)
  */
 
 import React, { useState } from 'react';
@@ -201,10 +201,10 @@ export const ActivateNetworkModal: React.FC<ActivateNetworkModalProps> = ({
                 </span>
               </div>
               <div className="font-black text-neutral-900 dark:text-white text-sm">
-                TOMSHOPBD Master Root (ID: GBD000001 / mem-root)
+                APON BAZAR Master Root (ID: AB-1000000001)
               </div>
               <p className="text-[11px] text-emerald-800 dark:text-emerald-300">
-                বাজার সদাই পলিসি অনুযায়ী স্পন্সর সর্বদা কোম্পানি মাস্টার আইডি। আলাদা কোনো ম্যানুয়াল স্পন্সর নির্বাচনের সুযোগ নেই। প্রথম অর্ডার ডেলিভারি ও পেমেন্ট প্রাপ্তির পর AI বাইনারি ট্রি-তে স্বয়ংক্রিয়ভাবে মেম্বার পজিশন প্লেসমেন্ট করবে।
+                আপন বাজার (APON BAZAR) পলিসি অনুযায়ী স্পন্সর সর্বদা কোম্পানি মাস্টার আইডি। আলাদা কোনো ম্যানুয়াল স্পন্সর নির্বাচনের সুযোগ নেই। প্রথম অর্ডার ডেলিভারি ও পেমেন্ট প্রাপ্তির পর AI বাইনারি ট্রি-তে স্বয়ংক্রিয়ভাবে মেম্বার পজিশন প্লেসমেন্ট করবে।
               </p>
             </div>
 

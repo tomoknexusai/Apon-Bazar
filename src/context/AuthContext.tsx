@@ -108,6 +108,10 @@ interface AuthContextType {
     currentPass: string,
     newPass: string
   ) => Promise<{ success: boolean; message: string }>;
+  changeOwnPassword: (
+    currentPass: string,
+    newPass: string
+  ) => Promise<{ success: boolean; message: string }>;
   deleteUserByAdmin: (userId: string) => { success: boolean; message: string };
   rollbackUserRegistration: (userId: string) => void;
   adjustUserWalletByAdmin: (
@@ -157,8 +161,13 @@ interface AuthContextType {
     tradeLicenseNumber?: string;
     registrationSource?: string;
     preserveCurrentSession?: boolean;
+    preAssignedCustomerId?: string;
+    internalId?: string;
+    registrationStatus?: 'pending' | 'completed';
+    emailStatus?: 'sent' | 'pending' | 'failed' | 'retry_queued';
   }) => UserProfile;
   linkBinaryCompanyId: (userId: string, binaryCompanyId: string) => void;
+  setUserTokenBalance: (userId: string, balance: number) => void;
   logout: () => Promise<{ success: boolean; message: string }>;
   updateProfile: (data: Partial<UserProfile>) => void;
   updateServiceAddress: (address: Partial<ServiceAddress>) => void;
@@ -260,12 +269,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             return u;
           });
 
-          // Merge with initialSeedUsers to ensure all system accounts remain available
+          // Remove duplicate binaryCompanyId AB-1000000002 if lingering on usr-network-07
+          parsed = parsed.map((u) =>
+            u.id === 'usr-network-07' && u.binaryCompanyId === 'AB-1000000002'
+              ? { ...u, binaryCompanyId: undefined }
+              : u
+          );
+
+          // Merge with initialSeedUsers cleanly without creating duplicate company accounts
           const seedMap = new Map<string, UserProfile>();
           parsed.forEach((u) => seedMap.set(u.id, u));
           initialSeedUsers.forEach((seed) => {
-            if (!seedMap.has(seed.id)) {
+            const existing = seedMap.get(seed.id);
+            if (!existing) {
               seedMap.set(seed.id, seed);
+            } else if (seed.binaryCompanyId && /^AB-100000000[1-7]$/.test(seed.binaryCompanyId)) {
+              seedMap.set(seed.id, {
+                ...existing,
+                username: existing.username || seed.username,
+                binaryCompanyId: seed.binaryCompanyId,
+                aponUniqueId: seed.aponUniqueId,
+                permanentMemberId: seed.permanentMemberId,
+                customerId: seed.customerId,
+                password: existing.password || seed.password,
+                mustChangePassword:
+                  typeof existing.mustChangePassword === 'boolean'
+                    ? existing.mustChangePassword
+                    : seed.mustChangePassword
+              });
             }
           });
           const combined = Array.from(seedMap.values());
@@ -455,6 +486,146 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const cleanIdLower = cleanId.toLowerCase();
     const normPhone = normalizeBDMobileNumber(cleanId);
 
+    // 0. Server-authoritative authentication for First 7 Company Accounts (AB-1000000001..007)
+    try {
+      const authRes = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ identifier: cleanId, password: pass || '' })
+      });
+      if (authRes.status !== 404) {
+        const authData = await authRes.json();
+        if (authData?.matchedAccountRecord) {
+          if (!authData.authenticated || !authData.account) {
+            addAuditLog('LOGIN_FAILED', 'Auth', `Server rejected login for company account: ${cleanId}`);
+            return false;
+          }
+          const srvAcc = authData.account;
+          const srvSummary = authData.summary;
+          const mustChange = Boolean(authData.mustChangePassword);
+          const resolvedCompanyId = srvAcc.companyId || srvAcc.customerId;
+          const resolvedTokenBal =
+            typeof srvSummary?.tokenSummary?.balance === 'number'
+              ? srvSummary.tokenSummary.balance
+              : Number(srvAcc.tomokTokenBalance) || 0;
+          const resolvedNetworkActive =
+            srvSummary?.networkStatus
+              ? srvSummary.networkStatus === 'active'
+              : srvAcc.primaryRole !== 'customer';
+
+          let matchedServerUser = users.find(
+            (u) =>
+              u.id === srvAcc.userId ||
+              (resolvedCompanyId &&
+                (u.username?.toUpperCase() === resolvedCompanyId.toUpperCase() ||
+                  u.customerId?.toUpperCase() === resolvedCompanyId.toUpperCase() ||
+                  u.binaryCompanyId?.toUpperCase() === resolvedCompanyId.toUpperCase()))
+          );
+
+          if (matchedServerUser) {
+            setUsers((prev) =>
+              prev.map((u) =>
+                u.id === matchedServerUser!.id
+                  ? {
+                      ...u,
+                      mustChangePassword: mustChange,
+                      customerId: resolvedCompanyId || u.customerId,
+                      permanentMemberId: resolvedCompanyId || u.permanentMemberId,
+                      binaryCompanyId: resolvedCompanyId,
+                      sponsorId: srvAcc.sponsorId || u.sponsorId,
+                      referralId: srvAcc.sponsorId || u.referralId,
+                      placementId: srvAcc.placementParentId || u.placementId,
+                      placementLeg:
+                        srvAcc.placementPosition === 'RIGHT'
+                          ? 'right'
+                          : srvAcc.placementPosition === 'LEFT'
+                          ? 'left'
+                          : u.placementLeg,
+                      placementLevel: srvAcc.placementLevel || u.placementLevel,
+                      registeredAt: srvAcc.registeredAt || u.registeredAt,
+                      tomokTokenBalance: resolvedTokenBal,
+                      isNetworkActive: resolvedNetworkActive,
+                      lastLogin: new Date().toISOString(),
+                      updatedAt: new Date().toISOString()
+                    }
+                  : u
+              )
+            );
+            matchedServerUser = {
+              ...matchedServerUser,
+              mustChangePassword: mustChange,
+              customerId: resolvedCompanyId || matchedServerUser.customerId,
+              permanentMemberId: resolvedCompanyId || matchedServerUser.permanentMemberId,
+              binaryCompanyId: resolvedCompanyId,
+              tomokTokenBalance: resolvedTokenBal,
+              isNetworkActive: resolvedNetworkActive
+            };
+          } else {
+            const fallbackSeed = initialSeedUsers.find((s) => s.id === srvAcc.userId);
+            matchedServerUser = fallbackSeed
+              ? { ...fallbackSeed, mustChangePassword: mustChange }
+              : ({
+                  id: srvAcc.userId,
+                  username: srvAcc.username || resolvedCompanyId,
+                  email: srvAcc.email,
+                  fullName: srvAcc.fullName,
+                  mobileNumber: srvAcc.mobileNumber,
+                  aponUniqueId: resolvedCompanyId,
+                  permanentMemberId: resolvedCompanyId,
+                  customerId: resolvedCompanyId,
+                  binaryCompanyId: resolvedCompanyId,
+                  sponsorId: srvAcc.sponsorId,
+                  referralId: srvAcc.sponsorId,
+                  placementId: srvAcc.placementParentId,
+                  placementLeg: srvAcc.placementPosition === 'RIGHT' ? 'right' : 'left',
+                  placementLevel: srvAcc.placementLevel,
+                  registeredAt: srvAcc.registeredAt,
+                  languagePreference: 'bn',
+                  accountStatus: srvAcc.accountStatus || 'active',
+                  verificationStatus: 'verified',
+                  tomokTokenBalance: resolvedTokenBal,
+                  roles: srvAcc.roles || ['customer'],
+                  primaryRole: srvAcc.primaryRole || 'customer',
+                  isNetworkActive: resolvedNetworkActive,
+                  mustChangePassword: mustChange,
+                  createdAt: srvAcc.registeredAt || srvAcc.createdAt || new Date().toISOString(),
+                  updatedAt: new Date().toISOString()
+                } as UserProfile);
+            setUsers((prev) => [matchedServerUser!, ...prev]);
+          }
+
+          setCurrentUserId(matchedServerUser.id);
+          setIsLoggedIn(true);
+          const targetRole = resolveUserHighestRole(
+            matchedServerUser.roles,
+            matchedServerUser.primaryRole,
+            matchedServerUser.id
+          );
+          setActiveRoleState(targetRole);
+          try {
+            localStorage.setItem(STORAGE_CURRENT_USER_ID_KEY, matchedServerUser.id);
+            localStorage.setItem(STORAGE_IS_LOGGED_IN_KEY, 'true');
+            localStorage.setItem(STORAGE_ACTIVE_ROLE_KEY, targetRole);
+          } catch (e) {
+            console.error('Failed to persist company auth session', e);
+          }
+          if (!mustChange && typeof window !== 'undefined') {
+            const targetPath = getDashboardPathForRole(targetRole);
+            window.history.pushState({}, '', targetPath);
+            window.dispatchEvent(new Event('popstate'));
+          }
+          addAuditLog(
+            'LOGIN_CREDENTIALS',
+            'Auth',
+            `Server-verified login for '${matchedServerUser.fullName}' (${srvAcc.companyId}) [mustChangePassword=${mustChange}]`
+          );
+          return true;
+        }
+      }
+    } catch {
+      // Fall back cleanly to local verification when server API is unreachable
+    }
+
     // 1. Find all candidate accounts matching the identifier
     const potentialMatches = users.filter((u) => {
       // 1. Chosen User ID match (Primary Login ID)
@@ -463,6 +634,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // 2. Unique Member ID / Customer ID / Role ID match
       if (u.permanentMemberId && u.permanentMemberId.toLowerCase() === cleanIdLower) return true;
       if (u.customerId && u.customerId.toLowerCase() === cleanIdLower) return true;
+      if (u.binaryCompanyId && u.binaryCompanyId.toLowerCase() === cleanIdLower) return true;
       if (u.id && u.id.toLowerCase() === cleanIdLower) return true;
 
       // 3. Mobile Number match
@@ -498,8 +670,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
     } else {
-      // If no password supplied, pick the primary match
-      matchedUser = potentialMatches[0];
+      const candidate = potentialMatches[0];
+      if (!candidate.password && !candidate.mustChangePassword) {
+        matchedUser = candidate;
+      }
     }
 
     if (!matchedUser) {
@@ -522,7 +696,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.error('Failed to persist auth session to localStorage', e);
     }
 
-    if (typeof window !== 'undefined') {
+    if (!matchedUser.mustChangePassword && typeof window !== 'undefined') {
       const targetPath = getDashboardPathForRole(targetRole);
       window.history.pushState({}, '', targetPath);
       window.dispatchEvent(new Event('popstate'));
@@ -812,6 +986,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     tradeLicenseNumber?: string;
     registrationSource?: string;
     preserveCurrentSession?: boolean;
+    preAssignedCustomerId?: string;
+    internalId?: string;
+    registrationStatus?: 'pending' | 'completed';
+    emailStatus?: 'sent' | 'pending' | 'failed' | 'retry_queued';
   }): UserProfile => {
     // 1. Mandatory Name Validation
     const trimmedName = (userData.fullName || '').trim();
@@ -940,12 +1118,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     const newUserId = `usr-${userData.role.replace('_', '-')}-${Date.now().toString().slice(-4)}`;
-    const permanentMemberId = UniqueIdService.generateNextUniqueId(
-      finalRole,
-      newUserId,
-      users,
-      resolvedBusinessType
-    );
+    const preAssignedAbId = (userData.preAssignedCustomerId || '').trim().toUpperCase();
+    const permanentMemberId =
+      preAssignedAbId ||
+      UniqueIdService.generateNextUniqueId(finalRole, newUserId, users, resolvedBusinessType);
 
     // 8. Secure Password Hashing
     const rawPassword = (userData.password || '').trim() || normalizedMobile;
@@ -1009,7 +1185,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const newUser: UserProfile = {
       id: newUserId,
-      username: chosenUsername || undefined,
+      internalId: userData.internalId,
+      username: chosenUsername || preAssignedAbId || undefined,
       aponUniqueId: permanentMemberId,
       customerId: permanentMemberId,
       email: trimmedEmail,
@@ -1017,20 +1194,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       mobileNumber: normalizedMobile,
       password: secureHashedPassword,
       nationalId: userData.nationalId || '',
+      registrationStatus: userData.registrationStatus || 'completed',
+      emailStatus: userData.emailStatus,
       languagePreference: 'bn',
       accountStatus: 'active',
       verificationStatus: 'verified',
-      tomokTokenBalance: 100, // 100 Signup Bonus Tokens
+      tomokTokenBalance: 0, // Ledger-derived initial token balance = 0
       roles: assignedRoles,
       primaryRole: userData.role,
       finalRole,
       businessType: resolvedBusinessType,
       permanentMemberId: permanentMemberId,
-      sponsorId: userData.referralId || userData.sponsorId || 'GBD000001',
-      referralId: userData.referralId || userData.sponsorId || 'GBD000001',
-      placementId: userData.placementId || 'GBD000001',
-      placementLeg: userData.placementLeg || 'right',
-      isNetworkActive: false,
+      binaryCompanyId: preAssignedAbId || undefined,
+      sponsorId: userData.referralId || userData.sponsorId || 'AB-1000000001',
+      referralId: userData.referralId || userData.sponsorId || 'AB-1000000001',
+      placementId: userData.placementId || 'AB-1000000001',
+      placementLeg: userData.placementLeg || 'left',
+      isNetworkActive: Boolean(preAssignedAbId),
       latitude: userData.latitude || 23.8103,
       longitude: userData.longitude || 90.4125,
       mandatoryAddress,
@@ -1093,6 +1273,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.error('Failed to persist linked binaryCompanyId', e);
       }
       return updated;
+    });
+  };
+
+  const setUserTokenBalance = (userId: string, balance: number) => {
+    const cleanBalance = Math.max(0, Number(balance) || 0);
+    setUsers((prev) => {
+      let changed = false;
+      const updated = prev.map((u) => {
+        if (u.id === userId && (u.tomokTokenBalance || 0) !== cleanBalance) {
+          changed = true;
+          return {
+            ...u,
+            tomokTokenBalance: cleanBalance,
+            updatedAt: new Date().toISOString()
+          };
+        }
+        return u;
+      });
+      if (changed) {
+        try {
+          localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify(updated));
+        } catch (e) {
+          console.error('Failed persisting ledger token balance', e);
+        }
+      }
+      return changed ? updated : prev;
     });
   };
 
@@ -1589,6 +1795,115 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   };
 
+  const changeOwnPassword = async (
+    currentPass: string,
+    newPass: string
+  ): Promise<{ success: boolean; message: string }> => {
+    if (!isLoggedIn || !currentUser || currentUser.id === 'guest') {
+      return { success: false, message: 'পাসওয়ার্ড পরিবর্তন করতে অনুগ্রহ করে লগইন করুন।' };
+    }
+
+    const cleanCurrent = (currentPass || '').trim();
+    const cleanNew = (newPass || '').trim();
+    const defaultInitial = ['12', '34', '56', '78'].join('');
+
+    if (!cleanCurrent) {
+      return { success: false, message: 'বর্তমান পাসওয়ার্ডটি লিখুন।' };
+    }
+    if (cleanNew.length < 6) {
+      return { success: false, message: 'নতুন পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে!' };
+    }
+    if (cleanNew === defaultInitial) {
+      return {
+        success: false,
+        message: 'নিরাপত্তার স্বার্থে ডিফল্ট পাসওয়ার্ড (12345678) পুনরায় ব্যবহার করা যাবে না! নতুন একটি শক্তিশালী পাসওয়ার্ড দিন।'
+      };
+    }
+    if (cleanNew === cleanCurrent) {
+      return {
+        success: false,
+        message: 'নতুন পাসওয়ার্ডটি পুরনো পাসওয়ার্ড থেকে আলাদা হতে হবে!'
+      };
+    }
+
+    // If company account in AB-1000000001..007 range, verify & persist via server API first
+    const companyIdentifier =
+      currentUser.binaryCompanyId || currentUser.username || currentUser.id;
+    const isSeedCompanyAccount =
+      /^AB-100000000[1-7]$/i.test(companyIdentifier) ||
+      ['usr-company-root', 'usr-leader-001', 'usr-leader-002', 'usr-member-003', 'usr-member-004', 'usr-member-005', 'usr-member-006'].includes(currentUser.id);
+
+    if (isSeedCompanyAccount) {
+      try {
+        const res = await fetch('/api/auth/change-password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            identifierOrUserId: companyIdentifier,
+            currentPassword: cleanCurrent,
+            newPassword: cleanNew
+          })
+        });
+        const data = await res.json();
+        if (!res.ok || !data?.success) {
+          return {
+            success: false,
+            message: data?.message || 'পাসওয়ার্ড পরিবর্তন ব্যর্থ হয়েছে।'
+          };
+        }
+      } catch (err: any) {
+        return {
+          success: false,
+          message: err?.message || 'সার্ভারের সাথে সংযোগ করতে সমস্যা হয়েছে।'
+        };
+      }
+    } else if (currentUser.password) {
+      const ok = verifyPasswordSync(cleanCurrent, currentUser.password);
+      if (!ok) {
+        return { success: false, message: 'বর্তমান পাসওয়ার্ডটি সঠিক নয়!' };
+      }
+    }
+
+    const newHashed = hashPasswordSync(cleanNew);
+    const nowIso = new Date().toISOString();
+
+    setUsers((prev) => {
+      const updated = prev.map((u) =>
+        u.id === currentUser.id
+          ? {
+              ...u,
+              password: newHashed,
+              mustChangePassword: false,
+              lastPasswordResetAt: nowIso,
+              updatedAt: nowIso
+            }
+          : u
+      );
+      try {
+        localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify(updated));
+      } catch (e) {}
+      return updated;
+    });
+
+    addAuditLog(
+      'USER_PASSWORD_CHANGED',
+      'Security_Credentials',
+      `User '${currentUser.fullName}' (${currentUser.binaryCompanyId || currentUser.permanentMemberId || currentUser.id}) completed mandatory password update securely.`
+    );
+
+    if (typeof window !== 'undefined') {
+      const targetRole = resolveUserHighestRole(currentUser.roles, currentUser.primaryRole, currentUser.id);
+      const targetPath = getDashboardPathForRole(targetRole);
+      window.history.pushState({}, '', targetPath);
+      window.dispatchEvent(new Event('popstate'));
+    }
+
+    return {
+      success: true,
+      message: 'পাসওয়ার্ড সফলভাবে পরিবর্তন করা হয়েছে! এখন আপনি ড্যাশবোর্ড ব্যবহার করতে পারবেন।'
+    };
+  };
+
   const adjustUserWalletByAdmin = (
     userId: string,
     amount: number,
@@ -1707,7 +2022,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       profilePhotoUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=300',
       accountStatus: 'active',
       verificationStatus: 'verified',
-      tomokTokenBalance: 50,
+      tomokTokenBalance: 0,
       roles: ['delivery_rider'],
       primaryRole: 'delivery_rider',
       permanentMemberId,
@@ -1920,11 +2235,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         verifyUserByMobile,
         resetPasswordByMobile,
         changeSuperAdminPassword,
+        changeOwnPassword,
         deleteUserByAdmin,
         rollbackUserRegistration,
         adjustUserWalletByAdmin,
         registerUser,
         linkBinaryCompanyId,
+        setUserTokenBalance,
         logout,
         updateProfile,
         updateServiceAddress,

@@ -1,7 +1,7 @@
 /**
  * Multi-Channel Interactive Order Engine & Hub
  * Implements 5 Channels: Website, WhatsApp, Messenger, SMS & AI Voice Call
- * Complies with the 13 Final Order System rules for AANO BAZAR
+ * Complies with the 13 Final Order System rules for APON BAZAR (আপন বাজার)
  */
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -152,13 +152,13 @@ export const MultiChannelOrderModal: React.FC<MultiChannelOrderModalProps> = ({
     setConfirmedOrder(null);
 
     const botGreeting = activeChannel === 'whatsapp'
-      ? '👋 আসসালামু আলাইকুম! TOMSHOPBD WhatsApp শপে স্বাগতম। আপনার কী প্রয়োজন জানাতে পারেন অথবা নিচে "আমার কিছু কেনাকাটা করতে হবে" বাটনে ক্লিক করুন।'
+      ? '👋 আসসালামু আলাইকুম! APON BAZAR WhatsApp শপে স্বাগতম। আপনার কী প্রয়োজন জানাতে পারেন অথবা নিচে "আমার কিছু কেনাকাটা করতে হবে" বাটনে ক্লিক করুন।'
       : activeChannel === 'messenger'
-      ? '👋 TOMSHOPBD Messenger অ্যাসিস্ট্যান্টে স্বাগতম! সহজে শপিং করতে ক্যাটাগরি বা পণ্যের নাম লিখুন।'
+      ? '👋 APON BAZAR Messenger অ্যাসিস্ট্যান্টে স্বাগতম! সহজে শপিং করতে ক্যাটাগরি বা পণ্যের নাম লিখুন।'
       : activeChannel === 'sms'
-      ? '📱 TOMSHOPBD Interactive SMS Portal: অর্ডার করতে ১ লিখে সেন্ড করুন অথবা সরাসরি পণ্যের নাম লিখুন।'
+      ? '📱 APON BAZAR Interactive SMS Portal: অর্ডার করতে ১ লিখে সেন্ড করুন অথবা সরাসরি পণ্যের নাম লিখুন।'
       : activeChannel === 'voice_call'
-      ? '🎙️ TOMSHOPBD AI ভয়েস কল চালু হয়েছে। আপনি মুখে বাংলায় বলুন, যেমন: "আমি ২ কেজি গাওয়া ঘি ও ১ কেজি মধু নিতে চাই"।'
+      ? '🎙️ APON BAZAR AI ভয়েস কল চালু হয়েছে। আপনি মুখে বাংলায় বলুন, যেমন: "আমি ২ কেজি গাওয়া ঘি ও ১ কেজি মধু নিতে চাই"।'
       : '🌐 Website Smart Order Guide: আপনার পছন্দের পণ্য কার্টে যোগ করে সরাসরি চেকআউট সম্পন্ন করুন।';
 
     setMessages([
@@ -706,7 +706,7 @@ export const MultiChannelOrderModal: React.FC<MultiChannelOrderModalProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-base sm:text-lg font-black tracking-tight">
-                  TOMSHOPBD মাল্টি-চ্যানেল অর্ডার সিস্টেম
+                  APON BAZAR মাল্টি-চ্যানেল অর্ডার সিস্টেম
                 </h2>
                 <span className="px-2 py-0.5 rounded-full bg-white/20 text-[10px] font-bold text-white uppercase tracking-wider">
                   5 Channels Integrated
@@ -959,7 +959,7 @@ export const MultiChannelOrderModal: React.FC<MultiChannelOrderModalProps> = ({
                                     {prod.titleBn || prod.title}
                                   </h4>
                                   <div className="flex flex-wrap items-center gap-2 text-[10px] text-neutral-500 dark:text-neutral-400">
-                                    <span>ব্র্যান্ড: <strong className="text-neutral-700 dark:text-neutral-300">{prod.brandName || prod.brandId || 'TOMSHOPBD PURE'}</strong></span>
+                                    <span>ব্র্যান্ড: <strong className="text-neutral-700 dark:text-neutral-300">{prod.brandName || prod.brandId || 'APON BAZAR PURE'}</strong></span>
                                     <span>•</span>
                                     <span>MRP: <strong className="text-emerald-600 dark:text-emerald-400 font-mono">৳{mrp}</strong></span>
                                   </div>
@@ -1037,7 +1037,7 @@ export const MultiChannelOrderModal: React.FC<MultiChannelOrderModalProps> = ({
                       <div className="flex items-center justify-between border-b border-emerald-200 dark:border-neutral-700 pb-2">
                         <div className="flex items-center gap-1.5 font-black text-emerald-800 dark:text-emerald-400 text-sm">
                           <Receipt className="w-4 h-4" />
-                          <span>TOMSHOPBD Final Order Card</span>
+                          <span>APON BAZAR Final Order Card</span>
                         </div>
                         <span className="px-2 py-0.5 rounded bg-emerald-600 text-white text-[10px] font-bold uppercase">
                           {activeChannel.toUpperCase()} Channel

@@ -177,7 +177,6 @@ export const initialSeedUsers: UserProfile[] = [
     roles: ['network_member', 'customer'],
     primaryRole: 'network_member',
     isNetworkActive: true,
-    binaryCompanyId: 'AB-1000000002',
     sponsorId: 'AB-1000000001',
     mandatoryAddress: {
       id: 'addr-net-07',
@@ -423,7 +422,138 @@ export const initialSeedUsers: UserProfile[] = [
     },
     createdAt: '2026-01-22T00:00:00.000Z',
     updatedAt: new Date().toISOString()
-  }
+  },
+  // =========================================================================
+  // FIRST 7 COMPANY ACCOUNTS (AB-1000000001 .. AB-1000000007)
+  // =========================================================================
+  ...[
+    {
+      id: 'usr-company-root',
+      companyId: 'AB-1000000001',
+      email: 'master@ghorerbazarbd.com',
+      fullName: 'Company Master (AB-1000000001)',
+      mobileNumber: '01312480175',
+      primaryRole: 'super_admin' as const,
+      roles: ['super_admin' as const, 'network_member' as const, 'customer' as const],
+      sponsorId: 'AB-1000000001',
+      placementId: 'AB-1000000001',
+      placementLeg: 'left' as const
+    },
+    {
+      id: 'usr-leader-001',
+      companyId: 'AB-1000000002',
+      email: 'tahmina@ghorerbazarbd.com',
+      fullName: 'তাহমিনা আক্তার (AB-1000000002)',
+      mobileNumber: '01711223344',
+      primaryRole: 'network_member' as const,
+      roles: ['network_member' as const, 'customer' as const],
+      sponsorId: 'AB-1000000001',
+      placementId: 'AB-1000000001',
+      placementLeg: 'left' as const
+    },
+    {
+      id: 'usr-leader-002',
+      companyId: 'AB-1000000003',
+      email: 'tanveer@ghorerbazarbd.com',
+      fullName: 'ইঞ্জিনিয়ার তানভীর আহমেদ (AB-1000000003)',
+      mobileNumber: '01811223344',
+      primaryRole: 'network_member' as const,
+      roles: ['network_member' as const, 'customer' as const],
+      sponsorId: 'AB-1000000001',
+      placementId: 'AB-1000000001',
+      placementLeg: 'right' as const
+    },
+    {
+      id: 'usr-member-003',
+      companyId: 'AB-1000000004',
+      email: 'mahmud@ghorerbazarbd.com',
+      fullName: 'মাহমুদুল হাসান (AB-1000000004)',
+      mobileNumber: '01911223344',
+      primaryRole: 'network_member' as const,
+      roles: ['network_member' as const, 'customer' as const],
+      sponsorId: 'AB-1000000002',
+      placementId: 'AB-1000000002',
+      placementLeg: 'left' as const
+    },
+    {
+      id: 'usr-member-004',
+      companyId: 'AB-1000000005',
+      email: 'parvez@ghorerbazarbd.com',
+      fullName: 'হাসান পারভেজ (AB-1000000005)',
+      mobileNumber: '01611223344',
+      primaryRole: 'network_member' as const,
+      roles: ['network_member' as const, 'customer' as const],
+      sponsorId: 'AB-1000000001',
+      placementId: 'AB-1000000002',
+      placementLeg: 'right' as const
+    },
+    {
+      id: 'usr-member-005',
+      companyId: 'AB-1000000006',
+      email: 'nusrat@ghorerbazarbd.com',
+      fullName: 'নুসরাত জাহান (AB-1000000006)',
+      mobileNumber: '01511223344',
+      primaryRole: 'network_member' as const,
+      roles: ['network_member' as const, 'customer' as const],
+      sponsorId: 'AB-1000000003',
+      placementId: 'AB-1000000003',
+      placementLeg: 'left' as const
+    },
+    {
+      id: 'usr-member-006',
+      companyId: 'AB-1000000007',
+      email: 'sakib@ghorerbazarbd.com',
+      fullName: 'সাকিব আল হাসান (AB-1000000007)',
+      mobileNumber: '01799887766',
+      primaryRole: 'network_member' as const,
+      roles: ['network_member' as const, 'customer' as const],
+      sponsorId: 'AB-1000000001',
+      placementId: 'AB-1000000003',
+      placementLeg: 'right' as const
+    }
+  ].map((acc) => ({
+    id: acc.id,
+    username: acc.companyId,
+    email: acc.email,
+    fullName: acc.fullName,
+    mobileNumber: acc.mobileNumber,
+    aponUniqueId: acc.companyId,
+    permanentMemberId: acc.companyId,
+    customerId: acc.companyId,
+    binaryCompanyId: acc.companyId,
+    finalRole: 'customer_networker' as const,
+    password: hashPasswordSync(['12', '34', '56', '78'].join('')),
+    mustChangePassword: true,
+    profilePhotoUrl: '',
+    languagePreference: 'bn' as const,
+    accountStatus: 'active' as const,
+    verificationStatus: 'verified' as const,
+    tomokTokenBalance: 5000.0,
+    roles: acc.roles,
+    primaryRole: acc.primaryRole,
+    isNetworkActive: true,
+    sponsorId: acc.sponsorId,
+    referralId: acc.sponsorId,
+    placementId: acc.placementId,
+    placementLeg: acc.placementLeg,
+    registrationStatus: 'completed' as const,
+    mandatoryAddress: {
+      id: `addr-${acc.id}`,
+      userId: acc.id,
+      title: 'কোম্পানি নেটওয়ার্ক ঠিকানা',
+      division: 'ঢাকা',
+      district: 'ঢাকা',
+      upazila: 'গুলশান',
+      unionName: 'গুলশান-১',
+      area: 'কর্পোরেট নেটওয়ার্ক হাব, ঢাকা',
+      postalCode: '1212',
+      isMandatoryServiceAddress: true,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z'
+    },
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z'
+  }))
 ];
 
 // Initial Notifications

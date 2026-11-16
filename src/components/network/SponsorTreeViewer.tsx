@@ -7,15 +7,15 @@ import React, { useState } from 'react';
 import { useNetworkMarketing } from '../../context/NetworkMarketingContext';
 import { formatPV } from '../../lib/ecommerce-data';
 import { NetworkMember } from '../../types/networkMarketing';
-import { Network, Search, User, Users, ChevronRight, ChevronDown, Award, Sparkles, Filter, ShieldCheck } from 'lucide-react';
+import { Search, Users, ChevronRight, ChevronDown, Award } from 'lucide-react';
 
 export const SponsorTreeViewer: React.FC = () => {
   const { members, currentMember } = useNetworkMarketing();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedGenFilter, setSelectedGenFilter] = useState<number>(0); // 0 = all, 1 to 20 = specific generation
-  const [expandedNodes, setExpandedNodes] = useState<Record<string, boolean>>({
-    [currentMember.id]: true
-  });
+  const [expandedNodes, setExpandedNodes] = useState<Record<string, boolean>>(() =>
+    currentMember?.id ? { [currentMember.id]: true } : {}
+  );
 
   const toggleNode = (id: string) => {
     setExpandedNodes((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -31,9 +31,10 @@ export const SponsorTreeViewer: React.FC = () => {
     const query = searchQuery.toLowerCase();
     return (
       m.fullName.toLowerCase().includes(query) ||
+      m.id.toLowerCase().includes(query) ||
       m.mobile.includes(query) ||
       m.rank.toLowerCase().includes(query) ||
-      m.packageName.toLowerCase().includes(query)
+      (m.packageName || '').toLowerCase().includes(query)
     );
   };
 
@@ -55,7 +56,7 @@ export const SponsorTreeViewer: React.FC = () => {
               <button
                 type="button"
                 onClick={() => toggleNode(m.id)}
-                className="p-1 rounded-lg bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300 hover:bg-neutral-200"
+                className="p-1 rounded-lg bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300 hover:bg-neutral-200 cursor-pointer"
               >
                 {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
               </button>
@@ -66,11 +67,14 @@ export const SponsorTreeViewer: React.FC = () => {
             </div>
 
             <div className="min-w-0">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <h4 className="font-bold text-neutral-900 dark:text-white truncate">
                   {m.fullName}
                 </h4>
-                {m.id === currentMember.id && (
+                <span className="font-mono text-[10px] font-bold text-emerald-700 dark:text-emerald-300">
+                  ({m.id})
+                </span>
+                {m.id === currentMember?.id && (
                   <span className="px-1.5 py-0.5 bg-emerald-600 text-white text-[10px] font-extrabold rounded">
                     You
                   </span>
@@ -80,9 +84,15 @@ export const SponsorTreeViewer: React.FC = () => {
               <div className="flex flex-wrap items-center gap-2 text-[10px] text-neutral-500 dark:text-neutral-400 mt-0.5">
                 <span className="font-mono">{m.mobile}</span>
                 <span>•</span>
-                <span className="text-amber-600 dark:text-amber-400 font-semibold">{m.packageName}</span>
+                <span className="text-amber-600 dark:text-amber-400 font-semibold">
+                  {m.packageName || 'কোনো সক্রিয় প্যাকেজ নেই'}
+                </span>
                 <span>•</span>
-                <span className="capitalize">{m.rank.replace('_', ' ')}</span>
+                <span className="capitalize">{(m.rank || 'customer').replace(/_/g, ' ')}</span>
+                <span>•</span>
+                <span className="font-mono text-indigo-600 dark:text-indigo-400">
+                  Placement: {m.parentId || 'ROOT'} ({(m.placementLeg || 'root').toUpperCase()})
+                </span>
               </div>
             </div>
           </div>
@@ -98,14 +108,14 @@ export const SponsorTreeViewer: React.FC = () => {
 
             <div className="text-right">
               <span className="text-[10px] text-neutral-400 block">ডাইরেক্ট টিম</span>
-              <span className="font-bold text-neutral-800 dark:text-neutral-200">{m.directReferralsCount} জন</span>
+              <span className="font-bold text-neutral-800 dark:text-neutral-200">{m.directReferralsCount ?? 0} জন</span>
             </div>
 
             <div className="h-6 w-px bg-neutral-200 dark:bg-neutral-700" />
 
             <div className="text-right">
               <span className="text-[10px] text-neutral-400 block">মোট টিম সদস্য</span>
-              <span className="font-bold text-indigo-600 dark:text-indigo-400">{m.teamMembersCount} জন</span>
+              <span className="font-bold text-indigo-600 dark:text-indigo-400">{m.teamMembersCount ?? 0} জন</span>
             </div>
           </div>
 
@@ -132,13 +142,13 @@ export const SponsorTreeViewer: React.FC = () => {
             <h3 className="font-black text-lg">স্পন্সর ট্রি ও ডাইরেক্ট টিম স্ট্রাকচার</h3>
           </div>
           <p className="text-xs text-emerald-100/80 mt-1">
-            আপনার স্পন্সরকৃত ২০ জেনারেশন পর্যন্ত ডাইরেক্ট টিম নেটওয়ার্ক ও মেম্বার হাইরারকি
+            আপনার স্পন্সরকৃত ২০ জেনারেশন পর্যন্ত ডাইরেক্ট টিম নেটওয়ার্ক ও মেম্বার হাইরারকি (Sponsor ≠ Binary Placement)
           </p>
         </div>
 
         <div className="flex items-center gap-2 text-xs font-bold bg-white/10 px-3.5 py-1.5 rounded-2xl border border-white/20">
           <Award className="w-4 h-4 text-amber-300" />
-          <span>আপনার ডাইরেক্ট রেফারেল: {currentMember.directReferralsCount} জন</span>
+          <span>আপনার ডাইরেক্ট রেফারেল: {currentMember?.directReferralsCount ?? 0} জন</span>
         </div>
       </div>
 
@@ -152,14 +162,13 @@ export const SponsorTreeViewer: React.FC = () => {
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="মেম্বার নাম, মোবাইল বা র‍্যাঙ্ক খুঁজুন..."
+            placeholder="মেম্বার নাম, ID, মোবাইল বা র‍্যাঙ্ক খুঁজুন..."
             className="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-xl py-1.5 pl-9 pr-3 text-xs text-neutral-900 dark:text-white"
           />
         </div>
 
         {/* Generation Level Filter */}
         <div className="flex items-center gap-2 w-full sm:w-auto">
-          <Filter className="w-4 h-4 text-emerald-600" />
           <span className="font-bold text-neutral-600 dark:text-neutral-400">জেনারেশন ফিল্টার:</span>
           <select
             value={selectedGenFilter}
@@ -177,7 +186,13 @@ export const SponsorTreeViewer: React.FC = () => {
 
       {/* Tree Content Render */}
       <div className="p-4 bg-neutral-50/50 dark:bg-neutral-950/40 rounded-3xl border border-neutral-200 dark:border-neutral-800 space-y-3">
-        {renderMemberNode(currentMember, 1)}
+        {currentMember ? (
+          renderMemberNode(currentMember, 1)
+        ) : (
+          <div className="py-8 text-center text-xs text-neutral-500 dark:text-neutral-400">
+            আপনার অ্যাকাউন্টের সাথে এখনো কোনো স্পন্সর ট্রি রেকর্ড যুক্ত হয়নি।
+          </div>
+        )}
       </div>
 
     </div>

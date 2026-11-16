@@ -12,8 +12,10 @@ import {
   EmailDeliveryRecord,
   IdMigrationReport,
   MatchingRecord,
-  NetworkMember
+  NetworkMember,
+  RankLevel
 } from '../types/networkMarketing';
+import { calculateIdGrade } from '../lib/binaryNetworkEngine';
 import { INITIAL_MATCHING_HISTORY, SEED_BINARY_MEMBERS } from '../lib/seedBinaryMembers';
 import {
   AB_ID_START_SEQ,
@@ -25,14 +27,20 @@ import {
   BlankSlotRegistrationParams,
   BlankSlotRegistrationResult,
   IsolatedSubtreeStats,
+  PlacementParentInspectionResult,
+  ReferralValidationResult,
   executeAtomicBlankSlotRegistration,
   extractIsolatedBinarySubtree,
   findAutoBfsBinaryPlacement,
   findBinaryTreeNodeById,
+  inspectPlacementParentSlots,
   isCompanyIdInSubtree,
-  reconcileBinaryTreeState
+  reconcileBinaryTreeState,
+  searchPlacementParentCandidates,
+  validateReferralMember
 } from '../lib/binaryBlankPositionEngine';
 import { dispatchRegistrationConfirmationEmail } from './emailService';
+import { createCrossProcessLock } from './fileLock';
 
 export interface PersistedBinaryStorePayload {
   treeState: BinaryTreePersistenceState;
@@ -83,12 +91,17 @@ export interface CustomerRegistrationApiInput {
   packageId?: string;
   packageName?: string;
   pv?: number;
+  activateWithPackage?: boolean;
+  orderOrPaymentRef?: string | null;
   registrationSource?: string;
-  placementMode?: 'auto_bfs' | 'locked_slot';
+  placementMode?: 'auto_bfs' | 'manual' | 'locked_slot';
+  placementMethod?: 'MANUAL' | 'AUTO_BFS';
   placementId?: string;
   placementPosition?: 'LEFT' | 'RIGHT' | 'left' | 'right';
   slotId?: string;
   appOrigin?: string;
+  requestorRole?: string;
+  requestorUserId?: string;
 }
 
 export interface CustomerRegistrationApiResponse {
@@ -100,6 +113,8 @@ export interface CustomerRegistrationApiResponse {
   referralId?: string;
   placementId?: string;
   placementPosition?: 'LEFT' | 'RIGHT';
+  placementMethod?: 'MANUAL' | 'AUTO_BFS';
+  placementLevel?: number;
   registrationDate?: string;
   newLeftBlankId?: string;
   newRightBlankId?: string;
@@ -149,26 +164,27 @@ export function createBinaryTreeStore(customStorePath?: string) {
     `${path.basename(storePath, '.json')}.pre-ab-migration.json`
   );
 
-  let mutexTail: Promise<unknown> = Promise.resolve();
+  const runWithLock = createCrossProcessLock(storePath);
   let cachedPayload: PersistedBinaryStorePayload | null = null;
-
-  function runWithLock<T>(task: () => Promise<T> | T): Promise<T> {
-    const run = mutexTail.then(() => task());
-    mutexTail = run.then(
-      () => undefined,
-      () => undefined
-    );
-    return run;
-  }
+  let cachedMtimeMs = 0;
+  let cachedSize = -1;
 
   function writeAtomicSync(payload: PersistedBinaryStorePayload): void {
     const dir = path.dirname(storePath);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
-    const tmpPath = `${storePath}.tmp.${process.pid}.${Date.now()}`;
+    const tmpPath = `${storePath}.tmp.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 7)}`;
     fs.writeFileSync(tmpPath, JSON.stringify(payload, null, 2), 'utf8');
     fs.renameSync(tmpPath, storePath);
+    try {
+      const st = fs.statSync(storePath);
+      cachedMtimeMs = st.mtimeMs;
+      cachedSize = st.size;
+    } catch {
+      cachedMtimeMs = 0;
+      cachedSize = -1;
+    }
   }
 
   function ensurePreMigrationBackup(rawContent: string): void {
@@ -184,12 +200,12 @@ export function createBinaryTreeStore(customStorePath?: string) {
   }
 
   function loadAndReconcileFromDisk(): PersistedBinaryStorePayload {
-    if (cachedPayload) {
-      return cachedPayload;
-    }
-
     if (fs.existsSync(storePath)) {
       try {
+        const st = fs.statSync(storePath);
+        if (cachedPayload && st.mtimeMs === cachedMtimeMs && st.size === cachedSize) {
+          return cachedPayload;
+        }
         const raw = fs.readFileSync(storePath, 'utf8');
         const parsed = JSON.parse(raw) as Partial<PersistedBinaryStorePayload>;
         if (parsed?.treeState && Array.isArray(parsed.treeState.nodes) && parsed.treeState.nodes.length > 0) {
@@ -235,6 +251,9 @@ export function createBinaryTreeStore(customStorePath?: string) {
 
           if (changed || reconciled.nodes.length !== parsed.treeState.nodes.length) {
             writeAtomicSync(payload);
+          } else {
+            cachedMtimeMs = st.mtimeMs;
+            cachedSize = st.size;
           }
           cachedPayload = payload;
           return payload;
@@ -305,6 +324,43 @@ export function createBinaryTreeStore(customStorePath?: string) {
           referralId,
           payload.treeState.idMigrationMappings
         );
+      });
+    },
+
+    validateReferral: async (referralId: string): Promise<ReferralValidationResult> => {
+      return runWithLock(() => {
+        const payload = loadAndReconcileFromDisk();
+        return validateReferralMember(
+          payload.treeState.nodes,
+          referralId,
+          payload.treeState.idMigrationMappings
+        );
+      });
+    },
+
+    inspectPlacementParent: async (
+      parentId?: string,
+      searchQuery?: string
+    ): Promise<{
+      inspection: PlacementParentInspectionResult | null;
+      candidates: ReturnType<typeof searchPlacementParentCandidates>;
+    }> => {
+      return runWithLock(() => {
+        const payload = loadAndReconcileFromDisk();
+        const cleanParent = (parentId || '').trim();
+        const inspection = cleanParent
+          ? inspectPlacementParentSlots(
+              payload.treeState.nodes,
+              cleanParent,
+              payload.treeState.idMigrationMappings
+            )
+          : null;
+        const candidates = searchPlacementParentCandidates(
+          payload.treeState.nodes,
+          searchQuery || cleanParent,
+          12
+        );
+        return { inspection, candidates };
       });
     },
 
@@ -515,49 +571,85 @@ export function createBinaryTreeStore(customStorePath?: string) {
           };
         }
 
-        // 2. Verify Referral ID exists & is registered
-        const referralNode = findBinaryTreeNodeById(
+        // 2. Verify Referral ID exists, is registered, and is active/eligible
+        const referralValidation = validateReferralMember(
           payload.treeState.nodes,
           cleanReferralId,
           mappings
         );
-        if (!referralNode || referralNode.nodeStatus === 'blank') {
+        if (!referralValidation.valid || !referralValidation.referralNode) {
           return {
             success: false,
-            statusCode: 404,
-            message: `Referral ID '${cleanReferralId}' ডাটাবেজে পাওয়া যায়নি বা নিবন্ধিত নয়।`
+            statusCode: referralValidation.statusCode,
+            message: referralValidation.message
           };
         }
+        const referralNode = referralValidation.referralNode;
 
-        // 3. Determine target placement (Locked Blank Slot vs Automatic BFS)
+        // 3. Determine target placement (Manual / Locked Blank Slot vs Automatic BFS)
+        const requestedMode =
+          input.placementMode === 'manual' || input.placementMethod === 'MANUAL'
+            ? 'manual'
+            : input.placementMode === 'locked_slot'
+            ? 'locked_slot'
+            : 'auto_bfs';
+
         let targetParentId: string;
         let targetLeg: 'left' | 'right';
         let targetSlotId: string | undefined;
+        const resolvedPlacementMethod: 'MANUAL' | 'AUTO_BFS' =
+          requestedMode === 'manual' || requestedMode === 'locked_slot' ? 'MANUAL' : 'AUTO_BFS';
 
-        if (input.placementMode === 'locked_slot' && input.placementId && input.placementPosition) {
-          const requestedParent = findBinaryTreeNodeById(
-            payload.treeState.nodes,
-            input.placementId,
-            mappings
-          );
-          if (!requestedParent || requestedParent.nodeStatus === 'blank') {
+        if (requestedMode === 'manual' || requestedMode === 'locked_slot') {
+          const cleanPlacementId = (input.placementId || '').trim();
+          if (!cleanPlacementId) {
             return {
               success: false,
-              statusCode: 404,
-              message: `প্লেসমেন্ট প্যারেন্ট '${input.placementId}' খুঁজে পাওয়া যায়নি।`
+              statusCode: 400,
+              message: 'Manual Placement-এর জন্য বৈধ Placement ID প্রদান করা আবশ্যক।'
             };
           }
-          const reqPos = String(input.placementPosition).toLowerCase();
+          const parentInspection = inspectPlacementParentSlots(
+            payload.treeState.nodes,
+            cleanPlacementId,
+            mappings
+          );
+          if (!parentInspection.found || !parentInspection.parentNode) {
+            return {
+              success: false,
+              statusCode: parentInspection.statusCode || 404,
+              message: parentInspection.message
+            };
+          }
+          if (!parentInspection.eligible) {
+            return {
+              success: false,
+              statusCode: 409,
+              message: parentInspection.message
+            };
+          }
+
+          const reqPos = String(input.placementPosition || '').trim().toLowerCase();
           if (reqPos !== 'left' && reqPos !== 'right') {
             return {
               success: false,
               statusCode: 400,
-              message: 'Placement Position অবশ্যই LEFT অথবা RIGHT হতে হবে।'
+              message: 'Placement Position অবশ্যই LEFT অথবা RIGHT নির্বাচন করতে হবে।'
             };
           }
-          targetParentId = requestedParent.id;
+
+          const selectedSlot = reqPos === 'left' ? parentInspection.left : parentInspection.right;
+          if (selectedSlot?.status === 'occupied') {
+            return {
+              success: false,
+              statusCode: 409,
+              message: `Placement ID '${parentInspection.parentNode.id}'-এর ${selectedSlot.position} পজিশনটি ইতিমধ্যে '${selectedSlot.occupiedById}' দ্বারা পূর্ণ রয়েছে।`
+            };
+          }
+
+          targetParentId = parentInspection.parentNode.id;
           targetLeg = reqPos;
-          targetSlotId = input.slotId;
+          targetSlotId = input.slotId || selectedSlot?.slotId;
         } else {
           // Automatic BFS placement under Referral ID
           const bfsRes = findAutoBfsBinaryPlacement(
@@ -584,7 +676,7 @@ export function createBinaryTreeStore(customStorePath?: string) {
               return {
                 success: false,
                 statusCode: 400,
-                message: `স্বয়ংক্রিয় বাইনারি প্লেসমেন্ট ম্যানুয়ালি পরিবর্তন করা যাবে না। অনুমোদিত BFS Placement ID: ${bfsRes.placementParentNode.id} (${bfsRes.position})।`
+                message: `স্বয়ংক্রিয় বাইনারি প্লেসমেন্ট (AUTO_BFS) ম্যানুয়ালি পরিবর্তন করা যাবে না। অনুমোদিত BFS Placement ID: ${bfsRes.placementParentNode.id} (${bfsRes.position})।`
               };
             }
           }
@@ -624,9 +716,12 @@ export function createBinaryTreeStore(customStorePath?: string) {
             registrationSource: input.registrationSource || 'Binary Tree',
             sponsorId: referralNode.id,
             sponsorName: referralNode.fullName,
-            packageId: input.packageId || 'pkg-100',
-            packageName: input.packageName || 'স্টার্টার মেম্বার প্যাকেজ (100 PV)',
-            pv: typeof input.pv === 'number' ? input.pv : 100,
+            placementMethod: resolvedPlacementMethod,
+            packageId: input.activateWithPackage ? input.packageId : '',
+            packageName: input.activateWithPackage ? input.packageName : '',
+            pv: input.activateWithPackage && typeof input.pv === 'number' ? input.pv : 0,
+            activateWithPackage: Boolean(input.activateWithPackage),
+            orderOrPaymentRef: input.orderOrPaymentRef || null,
             enforceUniqueProfileFields: true
           },
           mappings
@@ -646,8 +741,10 @@ export function createBinaryTreeStore(customStorePath?: string) {
         // 5. Commit tree state first (email failure MUST NOT roll back registration)
         const baseEmailLogs = payload.emailDeliveryLogs || [];
         let updatedEmailLogs = [...baseEmailLogs];
-        let finalMember = { ...newMember };
-        let finalNodes = atomicRes.state.nodes;
+        let finalMember = { ...newMember, placementMethod: resolvedPlacementMethod };
+        let finalNodes = atomicRes.state.nodes.map((n) =>
+          n.id === newMember.id ? finalMember : n
+        );
         let emailRecord: EmailDeliveryRecord | undefined;
 
         try {
@@ -670,13 +767,13 @@ export function createBinaryTreeStore(customStorePath?: string) {
             emailRes.record,
             ...updatedEmailLogs.filter((l) => l.idempotencyKey !== emailRes.record.idempotencyKey)
           ];
-          finalMember = { ...newMember, emailStatus: emailRes.record.status };
-          finalNodes = atomicRes.state.nodes.map((n) =>
+          finalMember = { ...finalMember, emailStatus: emailRes.record.status };
+          finalNodes = finalNodes.map((n) =>
             n.id === newMember.id ? finalMember : n
           );
         } catch {
-          finalMember = { ...newMember, emailStatus: 'failed' };
-          finalNodes = atomicRes.state.nodes.map((n) =>
+          finalMember = { ...finalMember, emailStatus: 'failed' };
+          finalNodes = finalNodes.map((n) =>
             n.id === newMember.id ? finalMember : n
           );
         }
@@ -695,12 +792,14 @@ export function createBinaryTreeStore(customStorePath?: string) {
         return {
           success: true,
           statusCode: 200,
-          message: `নিবন্ধন সফল হয়েছে! Customer ID: ${finalMember.id} (${targetParentId} এর ${regPosition} পজিশন)`,
+          message: `নিবন্ধন সফল হয়েছে! Customer ID: ${finalMember.id} (${targetParentId} এর ${regPosition} পজিশন • ${resolvedPlacementMethod})`,
           customerId: finalMember.id,
           customerName: finalMember.fullName,
           referralId: referralNode.id,
           placementId: targetParentId,
           placementPosition: regPosition,
+          placementMethod: resolvedPlacementMethod,
+          placementLevel: finalMember.placementLevel,
           registrationDate: finalMember.registeredAt || finalMember.created_at,
           newLeftBlankId: atomicRes.newLeftBlank?.id,
           newRightBlankId: atomicRes.newRightBlank?.id,
@@ -710,6 +809,122 @@ export function createBinaryTreeStore(customStorePath?: string) {
           newLeftBlank: atomicRes.newLeftBlank,
           newRightBlank: atomicRes.newRightBlank,
           treeState: finalState
+        };
+      });
+    },
+
+    activateMemberPackageOnTree: async (params: {
+      memberId: string;
+      packageId: string;
+      packageName: string;
+      pv: number;
+      orderOrPaymentRef?: string | null;
+      rank?: RankLevel;
+    }): Promise<{
+      success: boolean;
+      statusCode: number;
+      message: string;
+      updatedMember?: NetworkMember;
+      treeState?: BinaryTreePersistenceState;
+    }> => {
+      return runWithLock(() => {
+        const payload = loadAndReconcileFromDisk();
+        const target = findBinaryTreeNodeById(
+          payload.treeState.nodes,
+          params.memberId,
+          payload.treeState.idMigrationMappings
+        );
+        if (!target || target.nodeStatus === 'blank') {
+          return {
+            success: false,
+            statusCode: 404,
+            message: `Customer ID '${params.memberId}' বাইনারি ট্রিতে পাওয়া যায়নি।`
+          };
+        }
+
+        const nowIso = new Date().toISOString();
+        const nextPV = Math.max(0, Number(params.pv) || 0);
+        const prevPV = Math.max(0, Number(target.pv) || 0);
+        const pvDelta = Math.max(0, nextPV - prevPV);
+
+        // Build ancestor leg map for PV propagation
+        const ancestorLegDeltas = new Map<string, 'left' | 'right'>();
+        let traceParentId = target.parentId;
+        let traceLeg: 'left' | 'right' = target.placementLeg === 'left' ? 'left' : 'right';
+        const visited = new Set<string>([target.id]);
+        while (traceParentId && !visited.has(traceParentId)) {
+          visited.add(traceParentId);
+          ancestorLegDeltas.set(traceParentId, traceLeg);
+          const anc = payload.treeState.nodes.find((n) => n.id === traceParentId);
+          if (!anc || !anc.parentId) break;
+          traceLeg = anc.placementLeg === 'left' ? 'left' : 'right';
+          traceParentId = anc.parentId;
+        }
+
+        let updatedMember: NetworkMember | undefined;
+        const updatedNodes = payload.treeState.nodes.map((node) => {
+          if (node.id === target.id) {
+            updatedMember = {
+              ...node,
+              pv: nextPV,
+              personal_pv: nextPV,
+              packageId: params.packageId,
+              packageName: params.packageName,
+              idGrade: calculateIdGrade(nextPV),
+              active: nextPV > 0,
+              status: nextPV > 0 ? 'active' : 'inactive',
+              activationStatus: nextPV > 0 ? 'active' : 'inactive',
+              activationDate: nowIso,
+              orderOrPaymentRef: params.orderOrPaymentRef || node.orderOrPaymentRef || null,
+              rank: params.rank || node.rank || 'customer',
+              updated_at: nowIso
+            };
+            return updatedMember;
+          }
+
+          const ancLeg = ancestorLegDeltas.get(node.id);
+          if (ancLeg && pvDelta > 0) {
+            return {
+              ...node,
+              ...(ancLeg === 'left'
+                ? {
+                    leftPV: (node.leftPV || 0) + pvDelta,
+                    left_pv: (node.leftPV || 0) + pvDelta,
+                    leftCarryForward: (node.leftCarryForward || 0) + pvDelta,
+                    left_carry_forward: (node.leftCarryForward || 0) + pvDelta
+                  }
+                : {
+                    rightPV: (node.rightPV || 0) + pvDelta,
+                    right_pv: (node.rightPV || 0) + pvDelta,
+                    rightCarryForward: (node.rightCarryForward || 0) + pvDelta,
+                    right_carry_forward: (node.rightCarryForward || 0) + pvDelta
+                  }),
+              updated_at: nowIso
+            };
+          }
+
+          return node;
+        });
+
+        const nextTreeState: BinaryTreePersistenceState = {
+          ...payload.treeState,
+          nodes: updatedNodes,
+          version: payload.treeState.version + 1,
+          updatedAt: nowIso
+        };
+
+        savePayload({
+          treeState: nextTreeState,
+          matchingHistory: payload.matchingHistory,
+          emailDeliveryLogs: payload.emailDeliveryLogs || []
+        });
+
+        return {
+          success: true,
+          statusCode: 200,
+          message: `প্যাকেজ অ্যাক্টিভেশন সফল হয়েছে (${params.packageName}).`,
+          updatedMember,
+          treeState: nextTreeState
         };
       });
     },

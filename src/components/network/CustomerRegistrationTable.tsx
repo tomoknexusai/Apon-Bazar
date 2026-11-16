@@ -10,22 +10,13 @@ import { useAuth } from '../../context/AuthContext';
 import { useNetworkMarketing } from '../../context/NetworkMarketingContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { UserProfile } from '../../types';
+import { COMPANY_MASTER_ROOT_ID } from '../../types/networkMarketing';
 import {
   Users,
   Search,
-  Eye,
-  EyeOff,
-  Copy,
-  Check,
+  Lock,
   UserPlus,
-  ShieldCheck,
-  GitBranch,
   Clock,
-  MapPin,
-  Phone,
-  Mail,
-  Filter,
-  CheckCircle2,
   AlertCircle
 } from 'lucide-react';
 import { CustomerRegistrationModal } from '../auth/CustomerRegistrationModal';
@@ -45,24 +36,7 @@ export const CustomerRegistrationTable: React.FC<CustomerRegistrationTableProps>
   const isBn = language === 'bn';
 
   const [searchQuery, setSearchQuery] = useState('');
-  const [revealedPasswords, setRevealedPasswords] = useState<Record<string, boolean>>({});
-  const [copiedId, setCopiedId] = useState<string | null>(null);
   const [isRegisterOpen, setIsRegisterOpen] = useState(false);
-
-  // Toggle password visibility per row
-  const togglePasswordVisibility = (userId: string) => {
-    setRevealedPasswords((prev) => ({
-      ...prev,
-      [userId]: !prev[userId]
-    }));
-  };
-
-  // Copy text to clipboard
-  const handleCopy = (text: string, id: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedId(id);
-    setTimeout(() => setCopiedId(null), 2000);
-  };
 
   // Combine user records with network member details and format rows
   const customerRecords = useMemo(() => {
@@ -76,7 +50,6 @@ export const CustomerRegistrationTable: React.FC<CustomerRegistrationTableProps>
 
     return allUsers
       .filter((u) => {
-        // Exclude system super admin or show all customer/member accounts
         if (filterSource === 'Dashboard') {
           return u.registrationSource !== 'Binary Tree';
         }
@@ -86,25 +59,40 @@ export const CustomerRegistrationTable: React.FC<CustomerRegistrationTableProps>
         return true;
       })
       .map((u) => {
-        const memberInfo = memberMap.get(u.id) || memberMap.get(u.customerId || '') || memberMap.get(u.username || '');
-        const position = memberInfo?.position || memberInfo?.placementLeg || u.placementLeg || (memberInfo?.id === 'GBD000001' ? 'Root' : 'left');
-        const placementId = memberInfo?.parentId || u.placementId || (position === 'Root' ? '-' : 'GBD000001');
-        const referId = memberInfo?.sponsorId || u.sponsorId || u.referralId || 'GBD000001';
-        
-        // Format address
+        const memberInfo =
+          memberMap.get(u.id) ||
+          memberMap.get(u.binaryCompanyId || '') ||
+          memberMap.get(u.customerId || '') ||
+          memberMap.get(u.username || '');
+        const resolvedId =
+          memberInfo?.id || u.binaryCompanyId || u.customerId || u.permanentMemberId || '—';
+        const isMasterRoot = resolvedId === COMPANY_MASTER_ROOT_ID;
+        const position =
+          memberInfo?.position ||
+          memberInfo?.placementLeg ||
+          u.placementLeg ||
+          (isMasterRoot ? 'Root' : 'left');
+        const placementId =
+          memberInfo?.parentId || u.placementId || (position === 'Root' ? '-' : COMPANY_MASTER_ROOT_ID);
+        const referId =
+          memberInfo?.sponsorId || u.sponsorId || u.referralId || COMPANY_MASTER_ROOT_ID;
+
         const address =
           u.mandatoryAddress?.fullServiceAddress ||
           u.mandatoryAddress?.area ||
-          (u.mandatoryAddress?.district ? `${u.mandatoryAddress.district}, ${u.mandatoryAddress.division}` : '') ||
+          (u.mandatoryAddress?.district
+            ? `${u.mandatoryAddress.district}, ${u.mandatoryAddress.division}`
+            : '') ||
           memberInfo?.address ||
           'Dhaka, Bangladesh';
 
         return {
           id: u.id,
           customerName: u.fullName || u.name || 'Anonymous Customer',
-          customerId: u.customerId || memberInfo?.customerId || memberInfo?.id || 'CUST-100001',
-          userId: u.username || u.email?.split('@')[0] || u.id,
-          password: u.password || '••••••••',
+          customerId: resolvedId,
+          userId: u.username || resolvedId,
+          nidNumber: u.nationalId || memberInfo?.nidNumber || '—',
+          emailStatus: u.emailStatus || memberInfo?.emailStatus || 'sent',
           mobile: u.mobileNumber || memberInfo?.mobile || 'N/A',
           email: u.email || memberInfo?.email || 'N/A',
           referId,
@@ -112,8 +100,7 @@ export const CustomerRegistrationTable: React.FC<CustomerRegistrationTableProps>
           placementId,
           address,
           registrationSource: u.registrationSource || memberInfo?.registrationSource || 'Dashboard',
-          isNetworkActive: u.isNetworkActive ?? memberInfo?.active ?? true,
-          isReserved: false
+          isNetworkActive: u.isNetworkActive ?? memberInfo?.active ?? true
         };
       });
   }, [allUsers, members, filterSource]);
@@ -226,13 +213,13 @@ export const CustomerRegistrationTable: React.FC<CustomerRegistrationTableProps>
             <tr className="bg-neutral-50 dark:bg-neutral-800/80 border-b border-neutral-200 dark:border-neutral-700 text-neutral-600 dark:text-neutral-300 font-black uppercase text-[10px] tracking-wider">
               <th className="py-3 px-3.5">Customer Name</th>
               <th className="py-3 px-3.5">User ID</th>
-              <th className="py-3 px-3.5">Password</th>
+              <th className="py-3 px-3.5">Security</th>
               <th className="py-3 px-3.5">Mobile</th>
-              <th className="py-3 px-3.5">Email</th>
+              <th className="py-3 px-3.5">Email / Status</th>
               <th className="py-3 px-3.5">Refer ID</th>
               <th className="py-3 px-3.5 text-center">Position</th>
               <th className="py-3 px-3.5">Placement ID</th>
-              <th className="py-3 px-3.5 min-w-[180px]">Address</th>
+              <th className="py-3 px-3.5 min-w-[180px]">Address & NID</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-neutral-200 dark:divide-neutral-800">
@@ -244,94 +231,96 @@ export const CustomerRegistrationTable: React.FC<CustomerRegistrationTableProps>
                 </td>
               </tr>
             ) : (
-              filteredCustomers.map((row) => {
-                const isPasswordVisible = !!revealedPasswords[row.id];
-                return (
-                  <tr
-                    key={row.id}
-                    className="hover:bg-neutral-50/80 dark:hover:bg-neutral-800/50 transition-colors"
-                  >
-                    {/* 1. Customer Name */}
-                    <td className="py-3 px-3.5 font-bold text-neutral-900 dark:text-white">
-                      <div className="flex items-center gap-2">
-                        <div className="w-7 h-7 rounded-lg bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 font-bold flex items-center justify-center text-xs shrink-0">
-                          {row.customerName.charAt(0)}
-                        </div>
-                        <div>
-                          <p className="font-bold text-neutral-900 dark:text-white text-xs">{row.customerName}</p>
-                          <span className="font-mono text-[10px] text-emerald-600 dark:text-emerald-400 font-bold block">
-                            {row.customerId}
-                          </span>
-                        </div>
+              filteredCustomers.map((row) => (
+                <tr
+                  key={row.id}
+                  className="hover:bg-neutral-50/80 dark:hover:bg-neutral-800/50 transition-colors"
+                >
+                  {/* 1. Customer Name */}
+                  <td className="py-3 px-3.5 font-bold text-neutral-900 dark:text-white">
+                    <div className="flex items-center gap-2">
+                      <div className="w-7 h-7 rounded-lg bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 font-bold flex items-center justify-center text-xs shrink-0">
+                        {row.customerName.charAt(0)}
                       </div>
-                    </td>
-
-                    {/* 2. User ID */}
-                    <td className="py-3 px-3.5 font-mono font-bold text-neutral-800 dark:text-neutral-200">
-                      <span className="px-2 py-0.5 bg-neutral-100 dark:bg-neutral-800 rounded-md border border-neutral-200 dark:border-neutral-700 text-[11px]">
-                        {row.userId}
-                      </span>
-                    </td>
-
-                    {/* 3. Password */}
-                    <td className="py-3 px-3.5 font-mono text-xs">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-neutral-700 dark:text-neutral-300 font-bold select-all">
-                          {isPasswordVisible ? row.password : '••••••••'}
+                      <div>
+                        <p className="font-bold text-neutral-900 dark:text-white text-xs">{row.customerName}</p>
+                        <span className="font-mono text-[10px] text-emerald-600 dark:text-emerald-400 font-bold block">
+                          {row.customerId}
                         </span>
-                        <button
-                          type="button"
-                          onClick={() => togglePasswordVisibility(row.id)}
-                          className="text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 cursor-pointer p-0.5"
-                          title={isPasswordVisible ? 'পাসওয়ার্ড লুকান' : 'পাসওয়ার্ড দেখুন'}
-                        >
-                          {isPasswordVisible ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                        </button>
                       </div>
-                    </td>
+                    </div>
+                  </td>
 
-                    {/* 4. Mobile */}
-                    <td className="py-3 px-3.5 font-mono text-neutral-800 dark:text-neutral-200">
-                      {row.mobile}
-                    </td>
+                  {/* 2. User ID */}
+                  <td className="py-3 px-3.5 font-mono font-bold text-neutral-800 dark:text-neutral-200">
+                    <span className="px-2 py-0.5 bg-neutral-100 dark:bg-neutral-800 rounded-md border border-neutral-200 dark:border-neutral-700 text-[11px]">
+                      {row.userId}
+                    </span>
+                  </td>
 
-                    {/* 5. Email */}
-                    <td className="py-3 px-3.5 text-neutral-600 dark:text-neutral-400 text-[11px] truncate max-w-[150px]">
-                      {row.email}
-                    </td>
+                  {/* 3. Credential Security (Never exposes raw hashes) */}
+                  <td className="py-3 px-3.5 text-xs">
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 text-[10px] font-bold">
+                      <Lock className="w-3 h-3" />
+                      Hashed
+                    </span>
+                  </td>
 
-                    {/* 6. Refer ID */}
-                    <td className="py-3 px-3.5 font-mono font-bold text-blue-600 dark:text-blue-400">
-                      {row.referId}
-                    </td>
+                  {/* 4. Mobile */}
+                  <td className="py-3 px-3.5 font-mono text-neutral-800 dark:text-neutral-200">
+                    {row.mobile}
+                  </td>
 
-                    {/* 7. Position */}
-                    <td className="py-3 px-3.5 text-center">
-                      <span
-                        className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider ${
-                          row.position === 'Root'
-                            ? 'bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300'
-                            : row.position.toLowerCase() === 'left'
-                            ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800'
-                            : 'bg-teal-100 text-teal-800 dark:bg-teal-950 dark:text-teal-300 border border-teal-300 dark:border-teal-800'
-                        }`}
-                      >
-                        {row.position}
-                      </span>
-                    </td>
+                  {/* 5. Email & Delivery Status */}
+                  <td className="py-3 px-3.5 text-neutral-600 dark:text-neutral-400 text-[11px]">
+                    <div className="truncate max-w-[160px]" title={row.email}>{row.email}</div>
+                    <span
+                      className={`inline-block mt-0.5 px-1.5 py-0.2 rounded text-[9px] font-bold uppercase ${
+                        row.emailStatus === 'sent'
+                          ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                          : row.emailStatus === 'failed'
+                          ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
+                          : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                      }`}
+                    >
+                      Email: {row.emailStatus}
+                    </span>
+                  </td>
 
-                    {/* 8. Placement ID */}
-                    <td className="py-3 px-3.5 font-mono font-bold text-emerald-700 dark:text-emerald-300">
-                      {row.placementId}
-                    </td>
+                  {/* 6. Refer ID */}
+                  <td className="py-3 px-3.5 font-mono font-bold text-blue-600 dark:text-blue-400">
+                    {row.referId}
+                  </td>
 
-                    {/* 9. Address */}
-                    <td className="py-3 px-3.5 text-neutral-600 dark:text-neutral-300 text-[11px] leading-relaxed">
-                      {row.address}
-                    </td>
-                  </tr>
-                );
-              })
+                  {/* 7. Position */}
+                  <td className="py-3 px-3.5 text-center">
+                    <span
+                      className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider ${
+                        row.position === 'Root'
+                          ? 'bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300'
+                          : row.position.toLowerCase() === 'left'
+                          ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800'
+                          : 'bg-teal-100 text-teal-800 dark:bg-teal-950 dark:text-teal-300 border border-teal-300 dark:border-teal-800'
+                      }`}
+                    >
+                      {row.position}
+                    </span>
+                  </td>
+
+                  {/* 8. Placement ID */}
+                  <td className="py-3 px-3.5 font-mono font-bold text-emerald-700 dark:text-emerald-300">
+                    {row.placementId}
+                  </td>
+
+                  {/* 9. Address & NID */}
+                  <td className="py-3 px-3.5 text-neutral-600 dark:text-neutral-300 text-[11px] leading-relaxed">
+                    <div>{row.address}</div>
+                    {row.nidNumber && row.nidNumber !== '—' && (
+                      <div className="font-mono text-[10px] text-neutral-400 mt-0.5">NID: {row.nidNumber}</div>
+                    )}
+                  </td>
+                </tr>
+              ))
             )}
           </tbody>
         </table>
@@ -345,7 +334,7 @@ export const CustomerRegistrationTable: React.FC<CustomerRegistrationTableProps>
           onSwitchToLogin={() => setIsRegisterOpen(false)}
           source="dashboard"
           title="Customer Registration"
-          initialReferralId={currentUser?.customerId || 'GBD000001'}
+          initialReferralId={currentUser?.binaryCompanyId || currentUser?.customerId || COMPANY_MASTER_ROOT_ID}
         />
       )}
     </div>

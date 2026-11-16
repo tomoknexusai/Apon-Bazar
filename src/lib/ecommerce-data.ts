@@ -1,6 +1,6 @@
 /**
  * E-Commerce Catalog & Master Seed Data
- * Project: ঘরের বাজার বিডি (Ghorer Bazar BD)
+ * Project: APON BAZAR (আপন বাজার)
  */
 
 import { ProductCategory, Brand, Warehouse, Product, Coupon, BrandType } from '../types';
@@ -597,15 +597,15 @@ export const initialProducts: Product[] = [
   },
   {
     id: 'prod-aano-1500',
-    title: 'AANO BAZAR Premium Cold Pressed Mustard Oil 5L',
-    titleBn: 'আনো বাজার খাঁটি কাঠের ঘানি ভাঙা সরিষার তেল ৫ লিটার',
-    slug: 'aano-bazar-pure-mustard-oil-5l',
+    title: 'APON BAZAR Premium Cold Pressed Mustard Oil 5L',
+    titleBn: 'আপন বাজার খাঁটি কাঠের ঘানি ভাঙা সরিষার তেল ৫ লিটার',
+    slug: 'apon-bazar-pure-mustard-oil-5l',
     categoryId: 'cat-grocery',
     categoryName: 'Grocery & Food',
     subCategory: 'Cooking Oil',
     brandId: 'brand-3',
-    brandName: 'AANO BAZAR',
-    sku: 'AANO-OIL-1500',
+    brandName: 'APON BAZAR',
+    sku: 'AB-OIL-1500',
     barcode: '88091234000',
     images: [
       'https://images.unsplash.com/photo-1474979266404-7eaacbcd87c5?auto=format&fit=crop&q=80&w=800',
@@ -645,7 +645,7 @@ export const initialProducts: Product[] = [
     dimensionsCm: '20x20x35',
     codAvailable: true,
     unit: 'L',
-    tags: ['Mustard Oil', 'Cooking Oil', 'AANO BAZAR', 'Pure Cold Pressed'],
+    tags: ['Mustard Oil', 'Cooking Oil', 'APON BAZAR', 'Pure Cold Pressed'],
     stock: 120,
     warehouseId: 'DLR-THAK-001',
     warehouseName: 'M/S Rahman Enterprise',
@@ -873,15 +873,15 @@ export const initialProducts: Product[] = [
   },
   {
     id: 'prod-clothing-tshirt',
-    title: 'TOMSHOPBD Premium Organic Cotton T-Shirt',
-    titleBn: 'টমশপবিডি প্রিমিয়াম অর্গানিক কটন টি-শার্ট',
-    slug: 'tomshopbd-premium-organic-cotton-tshirt',
+    title: 'APON BAZAR Premium Organic Cotton T-Shirt',
+    titleBn: 'আপন বাজার প্রিমিয়াম অর্গানিক কটন টি-শার্ট',
+    slug: 'apon-bazar-premium-organic-cotton-tshirt',
     categoryId: 'cat-clothing-fashion',
     categoryName: 'Clothing & Fashion',
     subCategory: 'T-Shirt',
     brandId: 'brand-other',
-    brandName: 'TOMSHOPBD Fashion',
-    sku: 'TSBD-TSHIRT-01',
+    brandName: 'APON BAZAR Fashion',
+    sku: 'AB-TSHIRT-01',
     barcode: '88091234999',
     images: [
       'https://images.unsplash.com/photo-1521572267360-ee0c2909d518?auto=format&fit=crop&q=80&w=800',

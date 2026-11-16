@@ -1,6 +1,6 @@
 /**
  * Enterprise Multi-language Localization Engine (Bangla & English)
- * Project: ঘরের বাজার বিডি (Ghorer Bazar BD)
+ * Project: APON BAZAR (আপন বাজার)
  */
 
 import { Language, UserRole } from '../types';
@@ -30,7 +30,7 @@ export const roleLabels: Record<UserRole, { bn: string; en: string }> = {
 export const translations = {
   bn: {
     // Brand & Header
-    companyName: 'TOMSHOPBD',
+    companyName: 'আপন বাজার (APON BAZAR)',
     tagline: 'অনলাইন গ্রোসারী, শপিং ও বিশ্বস্ত ই-কমার্স প্ল্যাটফর্ম',
     searchPlaceholder: 'পণ্য, বিভাগ বা সেবা খুঁজুন...',
     languageName: 'বাংলা',
@@ -164,7 +164,7 @@ export const translations = {
   },
   en: {
     // Brand & Header
-    companyName: 'TOMSHOPBD',
+    companyName: 'APON BAZAR',
     tagline: 'Online Grocery, Shopping & Trusted E-Commerce Platform',
     searchPlaceholder: 'Search products, categories or services...',
     languageName: 'English',

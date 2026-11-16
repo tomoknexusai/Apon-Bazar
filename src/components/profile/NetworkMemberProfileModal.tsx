@@ -45,7 +45,7 @@ export const NetworkMemberProfileModal: React.FC<NetworkMemberProfileModalProps>
   onClose
 }) => {
   const { currentUser, allUsers, updateProfile, updateServiceAddress } = useAuth();
-  const { currentMember, updateMemberProfile } = useNetworkMarketing();
+  const { currentMember, ownCompanyMemberId, updateMemberProfile } = useNetworkMarketing();
   const { language, t } = useLanguage();
 
   const [isEditing, setIsEditing] = useState(false);
@@ -82,17 +82,31 @@ export const NetworkMemberProfileModal: React.FC<NetworkMemberProfileModalProps>
   if (!isOpen || !currentUser) return null;
 
   // Permanent Locked Values
-  const permanentMemberId = currentUser.permanentMemberId || currentMember?.id || 'GBBD-100293';
-  const networkMemberId = currentMember?.id || currentUser.id || 'mem-101';
-  const sponsorId = currentMember?.sponsorId || currentUser.sponsorId || 'mem-root';
-  const placementId = currentMember?.parentId || 'GBD000001';
+  const permanentMemberId =
+    currentMember?.id ||
+    ownCompanyMemberId ||
+    currentUser.customerId ||
+    currentUser.binaryCompanyId ||
+    currentUser.permanentMemberId ||
+    '—';
+  const networkMemberId =
+    currentMember?.id ||
+    currentUser.binaryCompanyId ||
+    currentUser.customerId ||
+    '—';
+  const sponsorId = currentMember?.sponsorId || currentUser.sponsorId || '—';
+  const placementId = currentMember?.parentId
+    ? `${currentMember.parentId} (${(currentMember.placementLeg || 'left').toUpperCase()})`
+    : currentMember?.id
+    ? 'ROOT (Level 1)'
+    : '—';
   const registrationDate = currentUser.createdAt
     ? new Date(currentUser.createdAt).toLocaleDateString('bn-BD', {
         year: 'numeric',
         month: 'long',
         day: 'numeric'
       })
-    : '১৫ জানুয়ারী, ২০২৫';
+    : '—';
 
   // Handle Edit Profile Button Click
   const handleStartEdit = () => {

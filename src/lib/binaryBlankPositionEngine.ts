@@ -17,6 +17,7 @@ import {
   BinaryTreePersistenceState,
   COMPANY_MASTER_ROOT_ID,
   IdMigrationMapping,
+  LegSummaryStats,
   NetworkMember,
   RankLevel
 } from '../types/networkMarketing';
@@ -327,6 +328,28 @@ export function reconcileBinaryTreeState(
     return a.id.localeCompare(b.id);
   });
 
+  // Compute deterministic placementLevel for all nodes
+  const finalNodeMap = new Map(finalNodes.map((n) => [n.id, n]));
+  const computedLevels = new Map<string, number>();
+  const resolveLevel = (nodeId: string, seen: Set<string>): number => {
+    const cached = computedLevels.get(nodeId);
+    if (cached !== undefined) return cached;
+    if (seen.has(nodeId)) return 1;
+    seen.add(nodeId);
+    const n = finalNodeMap.get(nodeId);
+    if (!n || !n.parentId || n.id === COMPANY_MASTER_ROOT_ID) {
+      computedLevels.set(nodeId, 1);
+      return 1;
+    }
+    const parentLvl = resolveLevel(n.parentId, seen);
+    const lvl = parentLvl + 1;
+    computedLevels.set(nodeId, lvl);
+    return lvl;
+  };
+  for (const n of finalNodes) {
+    n.placementLevel = resolveLevel(n.id, new Set<string>());
+  }
+
   const regCount = registeredNodes.length;
 
   return {
@@ -341,6 +364,142 @@ export function reconcileBinaryTreeState(
   };
 }
 
+export function computePlacementLevel(
+  allNodes: NetworkMember[],
+  nodeId?: string | null
+): number {
+  if (!nodeId) return 0;
+  const nodeById = new Map<string, NetworkMember>();
+  for (const n of allNodes) {
+    if (n?.id) nodeById.set(n.id, n);
+  }
+  let curr = nodeById.get(nodeId);
+  if (!curr) return 0;
+  let level = 1;
+  const visited = new Set<string>([curr.id]);
+  while (curr && curr.parentId && curr.id !== COMPANY_MASTER_ROOT_ID) {
+    if (visited.has(curr.parentId)) break;
+    visited.add(curr.parentId);
+    const parent = nodeById.get(curr.parentId);
+    if (!parent) break;
+    level += 1;
+    curr = parent;
+  }
+  return level;
+}
+
+export function computeSubtreeLegStats(
+  allNodes: NetworkMember[],
+  memberId?: string | null
+): {
+  left: LegSummaryStats;
+  right: LegSummaryStats;
+  matchingPV: number;
+} {
+  const emptyLeg: LegSummaryStats = {
+    totalMembers: 0,
+    activeMembers: 0,
+    inactiveMembers: 0,
+    computedSubtreePV: 0,
+    recordedLegPV: 0,
+    carryForwardPV: 0,
+    totalEligiblePV: 0
+  };
+  if (!memberId) {
+    return { left: { ...emptyLeg }, right: { ...emptyLeg }, matchingPV: 0 };
+  }
+
+  const nodeById = new Map<string, NetworkMember>();
+  const childrenByParentId = new Map<string, NetworkMember[]>();
+  for (const n of allNodes) {
+    if (!n?.id || n.nodeStatus === 'blank' || n.isBlankSlot) continue;
+    nodeById.set(n.id, n);
+    if (n.parentId && n.id !== COMPANY_MASTER_ROOT_ID) {
+      const list = childrenByParentId.get(n.parentId) || [];
+      list.push(n);
+      childrenByParentId.set(n.parentId, list);
+    }
+  }
+
+  const root = nodeById.get(memberId);
+  if (!root) {
+    return { left: { ...emptyLeg }, right: { ...emptyLeg }, matchingPV: 0 };
+  }
+
+  const countLeg = (startChildId: string | undefined, recordedPV: number, carryForwardPV: number): LegSummaryStats => {
+    if (!startChildId || !nodeById.has(startChildId)) {
+      return {
+        totalMembers: 0,
+        activeMembers: 0,
+        inactiveMembers: 0,
+        computedSubtreePV: 0,
+        recordedLegPV: recordedPV,
+        carryForwardPV,
+        totalEligiblePV: Math.max(0, recordedPV)
+      };
+    }
+
+    const queue: string[] = [startChildId];
+    const visited = new Set<string>([root.id]);
+    let totalMembers = 0;
+    let activeMembers = 0;
+    let inactiveMembers = 0;
+    let computedSubtreePV = 0;
+
+    while (queue.length > 0) {
+      const currId = queue.shift()!;
+      if (visited.has(currId)) continue;
+      visited.add(currId);
+      const curr = nodeById.get(currId);
+      if (!curr) continue;
+
+      totalMembers += 1;
+      const isActiveNode = curr.active !== false && curr.status !== 'inactive' && (curr.pv || 0) > 0;
+      if (isActiveNode) {
+        activeMembers += 1;
+        computedSubtreePV += Math.max(0, Number(curr.pv) || 0);
+      } else {
+        inactiveMembers += 1;
+      }
+
+      const fallbackChildren = childrenByParentId.get(curr.id) || [];
+      const lId =
+        curr.leftChildId ||
+        fallbackChildren.find((c) => c.placementLeg === 'left' || String(c.position).toLowerCase() === 'left')?.id;
+      const rId =
+        curr.rightChildId ||
+        fallbackChildren.find((c) => c.placementLeg === 'right' || String(c.position).toLowerCase() === 'right')?.id;
+
+      if (lId && !visited.has(lId)) queue.push(lId);
+      if (rId && !visited.has(rId)) queue.push(rId);
+    }
+
+    return {
+      totalMembers,
+      activeMembers,
+      inactiveMembers,
+      computedSubtreePV,
+      recordedLegPV: recordedPV,
+      carryForwardPV,
+      totalEligiblePV: Math.max(recordedPV, computedSubtreePV)
+    };
+  };
+
+  const rootFallbackChildren = childrenByParentId.get(root.id) || [];
+  const leftChildId =
+    root.leftChildId ||
+    rootFallbackChildren.find((c) => c.placementLeg === 'left' || String(c.position).toLowerCase() === 'left')?.id;
+  const rightChildId =
+    root.rightChildId ||
+    rootFallbackChildren.find((c) => c.placementLeg === 'right' || String(c.position).toLowerCase() === 'right')?.id;
+
+  const left = countLeg(leftChildId, Number(root.leftPV) || 0, Number(root.leftCarryForward) || 0);
+  const right = countLeg(rightChildId, Number(root.rightPV) || 0, Number(root.rightCarryForward) || 0);
+  const matchingPV = Math.min(left.carryForwardPV, right.carryForwardPV);
+
+  return { left, right, matchingPV };
+}
+
 export interface AutoBfsPlacementResult {
   found: boolean;
   message: string;
@@ -349,6 +508,227 @@ export interface AutoBfsPlacementResult {
   position?: 'LEFT' | 'RIGHT';
   leg?: 'left' | 'right';
   blankSlotId?: string;
+}
+
+export interface ReferralValidationResult {
+  valid: boolean;
+  statusCode: number;
+  message: string;
+  referralNode?: NetworkMember;
+}
+
+/**
+ * Validates that a Referral ID exists, is registered (not a blank slot),
+ * and is eligible (not deactivated or suspended).
+ */
+export function validateReferralMember(
+  allNodes: NetworkMember[],
+  referralIdInput?: string | null,
+  idMigrationMappings?: IdMigrationMapping[]
+): ReferralValidationResult {
+  const cleanRef = (referralIdInput || '').trim();
+  if (!cleanRef) {
+    return {
+      valid: false,
+      statusCode: 400,
+      message: 'অনুগ্রহ করে একটি বৈধ Referral ID প্রদান করুন।'
+    };
+  }
+
+  const referralNode = findBinaryTreeNodeById(allNodes, cleanRef, idMigrationMappings);
+  if (!referralNode || referralNode.nodeStatus === 'blank' || referralNode.isBlankSlot) {
+    return {
+      valid: false,
+      statusCode: 404,
+      message: `Referral ID '${cleanRef}' ডাটাবেজে খুঁজে পাওয়া যায়নি বা অনুমোদিত মেম্বার নয়।`
+    };
+  }
+
+  if (referralNode.registrationStatus === 'pending') {
+    return {
+      valid: false,
+      statusCode: 403,
+      message: `Referral ID '${referralNode.id}' এখনো নিবন্ধন সম্পন্ন করেনি।`
+    };
+  }
+
+  // Newly registered unpaid customer (0 PV, activationStatus === 'inactive', no package) may still share referral link;
+  // Explicitly deactivated or previously-active inactive members (e.g. status='inactive' & active=false on seeded/existing) are rejected.
+  const isUnactivatedNewCustomer =
+    referralNode.activationStatus === 'inactive' &&
+    (referralNode.pv || 0) === 0 &&
+    !referralNode.packageId &&
+    referralNode.registrationStatus === 'completed';
+
+  const isDeactivated =
+    (referralNode.active === false || referralNode.status === 'inactive') &&
+    !isUnactivatedNewCustomer;
+
+  if (isDeactivated) {
+    return {
+      valid: false,
+      statusCode: 400,
+      message: `Referral ID '${referralNode.id}' (${referralNode.fullName}) বর্তমানে নিষ্ক্রিয় (Inactive)। সক্রিয় Referral ID ব্যবহার করুন।`
+    };
+  }
+
+  return {
+    valid: true,
+    statusCode: 200,
+    message: `বৈধ স্পন্সর: ${referralNode.fullName} (${referralNode.id})`,
+    referralNode
+  };
+}
+
+export interface PlacementSlotAvailability {
+  position: 'LEFT' | 'RIGHT';
+  leg: 'left' | 'right';
+  status: 'available' | 'occupied';
+  slotId: string;
+  occupiedById?: string;
+  occupiedByName?: string;
+}
+
+export interface PlacementParentInspectionResult {
+  found: boolean;
+  eligible: boolean;
+  statusCode: number;
+  message: string;
+  parentNode?: NetworkMember;
+  parentId?: string;
+  parentName?: string;
+  parentLevel?: number;
+  left?: PlacementSlotAvailability;
+  right?: PlacementSlotAvailability;
+}
+
+/**
+ * Inspects a Placement Parent ID and returns exact availability for LEFT and RIGHT child slots.
+ */
+export function inspectPlacementParentSlots(
+  allNodes: NetworkMember[],
+  parentIdInput?: string | null,
+  idMigrationMappings?: IdMigrationMapping[]
+): PlacementParentInspectionResult {
+  const cleanParent = (parentIdInput || '').trim();
+  if (!cleanParent) {
+    return {
+      found: false,
+      eligible: false,
+      statusCode: 400,
+      message: 'অনুগ্রহ করে একটি বৈধ Placement ID প্রদান করুন।'
+    };
+  }
+
+  const parentNode = findBinaryTreeNodeById(allNodes, cleanParent, idMigrationMappings);
+  if (!parentNode || parentNode.nodeStatus === 'blank' || parentNode.isBlankSlot) {
+    return {
+      found: false,
+      eligible: false,
+      statusCode: 404,
+      message: `Placement ID '${cleanParent}' ডাটাবেজে খুঁজে পাওয়া যায়নি বা নিবন্ধিত সদস্য নয়।`
+    };
+  }
+
+  const nodeById = new Map<string, NetworkMember>();
+  for (const n of allNodes) {
+    if (n && n.id) nodeById.set(n.id, n);
+  }
+
+  const leftChild = parentNode.leftChildId ? nodeById.get(parentNode.leftChildId) : undefined;
+  const rightChild = parentNode.rightChildId ? nodeById.get(parentNode.rightChildId) : undefined;
+
+  const leftOccupied = Boolean(parentNode.leftChildId);
+  const rightOccupied = Boolean(parentNode.rightChildId);
+
+  const left: PlacementSlotAvailability = {
+    position: 'LEFT',
+    leg: 'left',
+    status: leftOccupied ? 'occupied' : 'available',
+    slotId: parentNode.leftBlankId || makeBlankSlotId(parentNode.id, 'left'),
+    occupiedById: parentNode.leftChildId,
+    occupiedByName: leftChild?.fullName
+  };
+
+  const right: PlacementSlotAvailability = {
+    position: 'RIGHT',
+    leg: 'right',
+    status: rightOccupied ? 'occupied' : 'available',
+    slotId: parentNode.rightBlankId || makeBlankSlotId(parentNode.id, 'right'),
+    occupiedById: parentNode.rightChildId,
+    occupiedByName: rightChild?.fullName
+  };
+
+  const eligible = !leftOccupied || !rightOccupied;
+  const parentLevel = computePlacementLevel(allNodes, parentNode.id) || 1;
+
+  return {
+    found: true,
+    eligible,
+    statusCode: eligible ? 200 : 409,
+    message: eligible
+      ? `বৈধ প্লেসমেন্ট প্যারেন্ট: ${parentNode.fullName} (${parentNode.id}) — ${
+          !leftOccupied && !rightOccupied
+            ? 'LEFT ও RIGHT উভয় পজিশন খালি আছে'
+            : !leftOccupied
+            ? 'শুধু LEFT পজিশন খালি আছে'
+            : 'শুধু RIGHT পজিশন খালি আছে'
+        }`
+      : `Placement ID '${parentNode.id}' (${parentNode.fullName})-এর LEFT ও RIGHT উভয় পজিশনই ইতিমধ্যে পূর্ণ রয়েছে। অন্য কোনো খালি Placement ID নির্বাচন করুন।`,
+    parentNode,
+    parentId: parentNode.id,
+    parentName: parentNode.fullName,
+    parentLevel,
+    left,
+    right
+  };
+}
+
+/**
+ * Searches registered members by ID, name, or mobile for Manual Placement parent selection,
+ * returning up to `limit` matches with their LEFT/RIGHT slot availability.
+ */
+export function searchPlacementParentCandidates(
+  allNodes: NetworkMember[],
+  query?: string,
+  limit: number = 10
+): Array<{
+  id: string;
+  fullName: string;
+  leftAvailable: boolean;
+  rightAvailable: boolean;
+  eligible: boolean;
+}> {
+  const q = (query || '').trim().toLowerCase();
+  const registered = allNodes.filter((n) => n.nodeStatus !== 'blank' && !n.isBlankSlot);
+  const filtered = q
+    ? registered.filter(
+        (n) =>
+          n.id.toLowerCase().includes(q) ||
+          n.fullName.toLowerCase().includes(q) ||
+          (n.mobile && n.mobile.includes(q))
+      )
+    : registered;
+
+  return filtered
+    .sort((a, b) => {
+      const aOpen = !a.leftChildId || !a.rightChildId ? 0 : 1;
+      const bOpen = !b.leftChildId || !b.rightChildId ? 0 : 1;
+      if (aOpen !== bOpen) return aOpen - bOpen;
+      return a.id.localeCompare(b.id);
+    })
+    .slice(0, limit)
+    .map((n) => {
+      const leftAvailable = !n.leftChildId;
+      const rightAvailable = !n.rightChildId;
+      return {
+        id: n.id,
+        fullName: n.fullName,
+        leftAvailable,
+        rightAvailable,
+        eligible: leftAvailable || rightAvailable
+      };
+    });
 }
 
 /**
@@ -365,21 +745,14 @@ export function findAutoBfsBinaryPlacement(
   referralIdInput?: string | null,
   idMigrationMappings?: IdMigrationMapping[]
 ): AutoBfsPlacementResult {
-  const cleanRef = (referralIdInput || '').trim();
-  if (!cleanRef) {
+  const refCheck = validateReferralMember(allNodes, referralIdInput, idMigrationMappings);
+  if (!refCheck.valid || !refCheck.referralNode) {
     return {
       found: false,
-      message: 'অনুগ্রহ করে একটি বৈধ Referral ID প্রদান করুন।'
+      message: refCheck.message
     };
   }
-
-  const referralNode = findBinaryTreeNodeById(allNodes, cleanRef, idMigrationMappings);
-  if (!referralNode || referralNode.nodeStatus === 'blank') {
-    return {
-      found: false,
-      message: `Referral ID '${cleanRef}' ডাটাবেজে খুঁজে পাওয়া যায়নি বা নিবন্ধিত নয়।`
-    };
-  }
+  const referralNode = refCheck.referralNode;
 
   const nodeById = new Map<string, NetworkMember>();
   for (const n of allNodes) {
@@ -452,8 +825,11 @@ export interface BlankSlotRegistrationParams {
   packageId?: string;
   packageName?: string;
   pv?: number;
+  activateWithPackage?: boolean;
+  orderOrPaymentRef?: string | null;
   rank?: RankLevel;
   mentorLeader?: string;
+  placementMethod?: 'MANUAL' | 'AUTO_BFS';
   enforceUniqueProfileFields?: boolean;
 }
 
@@ -566,8 +942,16 @@ export function executeAtomicBlankSlotRegistration(
     }
   }
 
-  // Check if target leg on parent already has a registered child
-  const existingRegisteredChildId = leg === 'left' ? parentNode.leftChildId : parentNode.rightChildId;
+  // Check if target leg on parent already has a registered child (strict parent+position uniqueness invariant)
+  const existingChildNode = currentState.nodes.find(
+    (n) =>
+      n.nodeStatus === 'registered' &&
+      n.parentId === parentNode.id &&
+      ((n.placementLeg || '').toLowerCase() === leg ||
+        (n.position || '').toUpperCase() === leg.toUpperCase())
+  );
+  const existingRegisteredChildId =
+    (leg === 'left' ? parentNode.leftChildId : parentNode.rightChildId) || existingChildNode?.id;
   if (existingRegisteredChildId) {
     return {
       success: false,
@@ -620,22 +1004,24 @@ export function executeAtomicBlankSlotRegistration(
   // Resolve Sponsor (Referral ID) — strictly separate from Binary Placement Parent
   let sponsorNode = parentNode;
   if (params.sponsorId && params.sponsorId.trim()) {
-    const matchedSponsor = findBinaryTreeNodeById(
+    const refValidation = validateReferralMember(
       currentState.nodes,
       params.sponsorId,
       idMigrationMappings || currentState.idMigrationMappings
     );
-    if (!matchedSponsor || matchedSponsor.nodeStatus === 'blank') {
+    if (!refValidation.valid || !refValidation.referralNode) {
       return {
         success: false,
-        statusCode: 404,
-        message: `Referral ID '${params.sponsorId}' খুঁজে পাওয়া যায়নি বা সক্রিয় নয়।`
+        statusCode: refValidation.statusCode,
+        message: refValidation.message
       };
     }
-    sponsorNode = matchedSponsor;
+    sponsorNode = refValidation.referralNode;
   }
 
-  const pvValue = typeof params.pv === 'number' && params.pv >= 0 ? params.pv : 100;
+  const hasPaidPackageActivation =
+    params.activateWithPackage === true && typeof params.pv === 'number' && params.pv > 0;
+  const pvValue = hasPaidPackageActivation ? Number(params.pv) : 0;
   const allocatedIds: Record<string, 'blank' | 'registered' | 'tombstoned'> = {
     ...currentState.allocatedIds
   };
@@ -646,6 +1032,15 @@ export function executeAtomicBlankSlotRegistration(
     currentState.nodes,
     currentState.lastAbCustomerSeq || AB_ID_START_SEQ
   );
+
+  // Prevent self-referral or circular lineage
+  if (sponsorNode.id === newCustomerId || parentNode.id === newCustomerId) {
+    return {
+      success: false,
+      statusCode: 400,
+      message: 'সেল্ফ-রেফারেল বা সার্কুলার প্লেসমেন্ট অনুমোদিত নয়।'
+    };
+  }
 
   // Mark consumed slot as tombstoned (never reused)
   if (blankNode.id) {
@@ -667,6 +1062,9 @@ export function executeAtomicBlankSlotRegistration(
   );
   allocatedIds[newLeftBlank.id] = 'blank';
   allocatedIds[newRightBlank.id] = 'blank';
+
+  const parentLevel = computePlacementLevel(currentState.nodes, parentNode.id) || 1;
+  const newPlacementLevel = parentLevel + 1;
 
   const registeredMember: NetworkMember = {
     ...blankNode,
@@ -694,10 +1092,15 @@ export function executeAtomicBlankSlotRegistration(
     created_at: nowIso,
     registeredAt: nowIso,
     updated_at: nowIso,
-    rank: params.rank || 'network_member',
+    rank: hasPaidPackageActivation ? params.rank || 'network_member' : 'customer',
     idGrade: calculateIdGrade(pvValue),
-    packageId: params.packageId || 'pkg-100',
-    packageName: params.packageName || 'স্টার্টার মেম্বার প্যাকেজ (100 PV)',
+    packageId: hasPaidPackageActivation ? params.packageId || 'pkg-100' : '',
+    packageName: hasPaidPackageActivation ? params.packageName || 'স্টার্টার মেম্বার (100 PV)' : '',
+    activationStatus: hasPaidPackageActivation ? 'active' : 'inactive',
+    activationDate: hasPaidPackageActivation ? nowIso : null,
+    orderOrPaymentRef: hasPaidPackageActivation ? params.orderOrPaymentRef || null : null,
+    rankQualificationStatus: hasPaidPackageActivation ? 'qualified' : 'unqualified',
+    rankAchievedAt: hasPaidPackageActivation ? nowIso : null,
     sponsorId: sponsorNode.id,
     sponsor_id: sponsorNode.id,
     referralId: sponsorNode.id,
@@ -710,6 +1113,8 @@ export function executeAtomicBlankSlotRegistration(
     placement_id: parentNode.id,
     placementLeg: leg,
     position: leg === 'left' ? 'LEFT' : 'RIGHT',
+    placementMethod: params.placementMethod || 'AUTO_BFS',
+    placementLevel: newPlacementLevel,
     mentorLeader: params.mentorLeader || sponsorNode.fullName,
     memberType: 'Personal',
     member_type: 'Personal',
@@ -730,8 +1135,8 @@ export function executeAtomicBlankSlotRegistration(
     totalMatchedPV: 0,
     directReferralsCount: 0,
     teamMembersCount: 0,
-    active: true,
-    status: 'active',
+    active: hasPaidPackageActivation,
+    status: hasPaidPackageActivation ? 'active' : 'inactive',
     nodeStatus: 'registered',
     placementLocked: true
   };

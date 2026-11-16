@@ -1,19 +1,29 @@
 /**
  * Rank System & Achievement Certificate Generator Component
- * Project: ঘরের বাজার বিডি (Ghorer Bazar BD)
+ * Project: APON BAZAR (আপন বাজার)
  */
 
 import React, { useState } from 'react';
+import { useAuth } from '../../context/AuthContext';
 import { useNetworkMarketing } from '../../context/NetworkMarketingContext';
 import { formatPV } from '../../lib/ecommerce-data';
 import { RankRequirement } from '../../types/networkMarketing';
 import { Award, ShieldCheck, CheckCircle2, Crown, Sparkles, Printer, Download, Globe, Navigation, Briefcase, Zap, X } from 'lucide-react';
 
 export const RankRewardsViewer: React.FC = () => {
-  const { ranks, currentMember } = useNetworkMarketing();
+  const { currentUser } = useAuth();
+  const { ranks, currentMember, customerDashboardSummary } = useNetworkMarketing();
   const [selectedCertRank, setSelectedCertRank] = useState<RankRequirement | null>(null);
 
-  const currentRankObj = ranks.find((r) => r.rank === currentMember.rank) || ranks[0];
+  const earnedRankCode = customerDashboardSummary?.earnedRank?.rank || currentMember?.rank || 'customer';
+  const currentRankObj = ranks.find((r) => r.rank === earnedRankCode) || ranks[0];
+  const qualificationStatus =
+    customerDashboardSummary?.earnedRank?.qualificationStatus ||
+    currentMember?.rankQualificationStatus ||
+    (earnedRankCode !== 'customer' && (currentMember?.pv || 0) > 0 ? 'qualified' : 'unqualified');
+  const achievedDate =
+    customerDashboardSummary?.earnedRank?.achievedDate || currentMember?.rankAchievedAt || null;
+  const memberDisplayName = currentMember?.fullName || currentUser?.fullName || 'সাধারণ গ্রাহক';
 
   return (
     <div className="space-y-6 text-neutral-900 dark:text-neutral-100">
@@ -30,16 +40,23 @@ export const RankRewardsViewer: React.FC = () => {
           </p>
         </div>
 
-        <div className="bg-white/10 backdrop-blur-md px-4 py-2.5 rounded-2xl border border-white/20 text-xs shrink-0">
-          <span className="text-amber-200 block text-[10px]">আপনার বর্তমান অর্জন:</span>
-          <span className="font-black text-amber-300 text-sm">{currentRankObj.titleBn}</span>
+        <div className="bg-white/10 backdrop-blur-md px-4 py-2.5 rounded-2xl border border-white/20 text-xs shrink-0 space-y-0.5">
+          <span className="text-amber-200 block text-[10px]">আপনার বর্তমান অর্জিত র‍্যাঙ্ক:</span>
+          <span className="font-black text-amber-300 text-sm block">{currentRankObj.titleBn}</span>
+          <span className="text-[10px] text-amber-100/80 block">
+            স্ট্যাটাস: {qualificationStatus === 'qualified' ? 'Qualified ✅' : 'Unqualified (Initial)'}
+            {achievedDate ? ` • অর্জনের তারিখ: ${new Date(achievedDate).toLocaleDateString('bn-BD')}` : ''}
+          </span>
         </div>
       </div>
 
       {/* Ranks 10-Level List */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {ranks.map((r) => {
-          const isAchieved = r.level <= currentRankObj.level;
+          const isAchieved =
+            r.level === 1
+              ? true
+              : qualificationStatus === 'qualified' && r.level <= currentRankObj.level;
           const isCurrent = r.rank === currentRankObj.rank;
 
           return (
@@ -125,7 +142,7 @@ export const RankRewardsViewer: React.FC = () => {
                 CERTIFICATE OF ACHIEVEMENT
               </h2>
               <p className="text-xs uppercase tracking-widest text-neutral-500 font-sans">
-                TOMSHOPBD Network Marketing Enterprise
+                APON BAZAR Network Marketing Enterprise
               </p>
             </div>
 
@@ -136,7 +153,7 @@ export const RankRewardsViewer: React.FC = () => {
               </p>
               
               <h3 className="text-2xl font-black text-neutral-900 font-sans tracking-wide">
-                {currentMember.fullName}
+                {memberDisplayName}
               </h3>
 
               <p className="text-xs text-neutral-700 max-w-md mx-auto leading-relaxed font-sans">
@@ -157,7 +174,7 @@ export const RankRewardsViewer: React.FC = () => {
                   Rofiqul Islam
                 </div>
                 <span className="font-bold block text-neutral-800">Founder & Managing Director</span>
-                <span className="text-[10px] text-neutral-400 block">TOMSHOPBD</span>
+                <span className="text-[10px] text-neutral-400 block">APON BAZAR</span>
               </div>
 
               <div className="text-center space-y-1">
@@ -165,7 +182,7 @@ export const RankRewardsViewer: React.FC = () => {
                   {new Date().toISOString().substring(0, 10)}
                 </div>
                 <span className="font-bold block text-neutral-800">Issue Date & Seal</span>
-                <span className="text-[10px] text-neutral-400 block">Verification ID: GBD-CERT-8849</span>
+                <span className="text-[10px] text-neutral-400 block">Verification ID: AB-CERT-8849</span>
               </div>
             </div>
 

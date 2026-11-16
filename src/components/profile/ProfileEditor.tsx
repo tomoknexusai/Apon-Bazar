@@ -26,7 +26,7 @@ import {
 
 export const ProfileEditor: React.FC = () => {
   const { currentUser, allUsers, updateProfile, updateServiceAddress, submitKyc } = useAuth();
-  const { currentMember, updateMemberProfile } = useNetworkMarketing();
+  const { currentMember, ownCompanyMemberId, tokenSummary, updateMemberProfile } = useNetworkMarketing();
   const { language, t } = useLanguage();
 
   const [fullName, setFullName] = useState(currentUser?.fullName || '');
@@ -63,17 +63,31 @@ export const ProfileEditor: React.FC = () => {
   const isSuperAdmin = currentUser?.roles?.includes('super_admin') || currentUser?.primaryRole === 'super_admin';
 
   // Permanent Locked Identifiers
-  const permanentMemberId = currentUser.permanentMemberId || currentMember?.id || 'GBBD-100293';
-  const networkMemberId = currentMember?.id || currentUser.id || 'mem-101';
-  const sponsorId = currentMember?.sponsorId || currentUser.sponsorId || 'mem-root';
-  const placementId = currentMember?.parentId || 'GBD000001';
+  const permanentMemberId =
+    currentMember?.id ||
+    ownCompanyMemberId ||
+    currentUser.customerId ||
+    currentUser.binaryCompanyId ||
+    currentUser.permanentMemberId ||
+    '—';
+  const networkMemberId =
+    currentMember?.id ||
+    currentUser.binaryCompanyId ||
+    currentUser.customerId ||
+    '—';
+  const sponsorId = currentMember?.sponsorId || currentUser.sponsorId || '—';
+  const placementId = currentMember?.parentId
+    ? `${currentMember.parentId} (${(currentMember.placementLeg || 'left').toUpperCase()})`
+    : currentMember?.id
+    ? 'ROOT (Level 1)'
+    : '—';
   const registrationDate = currentUser.createdAt
     ? new Date(currentUser.createdAt).toLocaleDateString('bn-BD', {
         year: 'numeric',
         month: 'long',
         day: 'numeric'
       })
-    : '১৫ জানুয়ারী, ২০২৫';
+    : '—';
 
   const handleSaveProfile = (e: React.FormEvent) => {
     e.preventDefault();
@@ -221,7 +235,7 @@ export const ProfileEditor: React.FC = () => {
             </span>
             <div className="flex items-baseline gap-1 mt-1">
               <span className="text-2xl font-black font-mono">
-                {(currentUser?.tomokTokenBalance || 0).toLocaleString()}
+                {(tokenSummary?.balance ?? currentUser?.tomokTokenBalance ?? 0).toLocaleString()}
               </span>
               <span className="text-xs font-bold">TOMOK</span>
             </div>
