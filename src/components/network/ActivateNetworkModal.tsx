@@ -37,7 +37,7 @@ export const ActivateNetworkModal: React.FC<ActivateNetworkModalProps> = ({
   onClose,
   onSuccess
 }) => {
-  const { currentUser, updateProfile } = useAuth();
+  const { currentUser, updateProfile, refreshCurrentUserProfile } = useAuth();
   const {
     findSponsor,
     validateSponsorId,
@@ -116,11 +116,10 @@ export const ActivateNetworkModal: React.FC<ActivateNetworkModalProps> = ({
         return;
       }
 
-      // Update AuthContext Profile
-      updateProfile({
-        sponsorId: res.sponsorId,
+      // Update AuthContext Profile & refresh server profile (sponsorId is managed by network engine)
+      void updateProfile({
         isNetworkActive: true
-      });
+      }).then(() => refreshCurrentUserProfile());
 
       setActivationResult(res);
       setLoading(false);

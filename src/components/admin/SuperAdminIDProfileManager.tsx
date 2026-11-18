@@ -20,6 +20,12 @@ import { AccessDenied403 } from '../common/AccessDenied403';
 import { UserProfile, UserRole, AccountStatus, KycStatus, ServiceAddress, FIXED_SUPER_ADMIN_ID, BusinessType, FinalRole, FINAL_ROLE_DEFINITIONS } from '../../types';
 import { UniqueIdService } from '../../services/UniqueIdService';
 import {
+  getAllDeliveryZones,
+  getZoneById,
+  getZoneByUpazila,
+  resolveDealerZone
+} from '../../services/DeliveryZoneService';
+import {
   ShieldAlert,
   Search,
   Filter,
@@ -73,6 +79,7 @@ export const SuperAdminIDProfileManager: React.FC = () => {
     currentUser,
     getActiveUsersForSuperAdmin,
     allUsers,
+    refreshAllUsersForSuperAdmin,
     updateUserStatusByAdmin,
     updateUserByAdmin,
     resetUserPasswordBySuperAdmin,
@@ -136,6 +143,7 @@ export const SuperAdminIDProfileManager: React.FC = () => {
   const [editPostalCode, setEditPostalCode] = useState<string>('1209');
   const [editFullAddress, setEditFullAddress] = useState<string>('');
   const [editBusinessType, setEditBusinessType] = useState<BusinessType>('Dealer');
+  const [editZoneId, setEditZoneId] = useState<string>('upz_435');
 
   // Password Reset Form State
   const [newPassword, setNewPassword] = useState<string>('');
@@ -170,11 +178,18 @@ export const SuperAdminIDProfileManager: React.FC = () => {
 
   // Action / Feedback Toast Messages
   const [toastMessage, setToastMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [isSavingProfile, setIsSavingProfile] = useState<boolean>(false);
 
   const showToast = (type: 'success' | 'error', text: string) => {
     setToastMessage({ type, text });
     setTimeout(() => setToastMessage(null), 5000);
   };
+
+  useEffect(() => {
+    if (isSuperAdmin) {
+      void refreshAllUsersForSuperAdmin();
+    }
+  }, [isSuperAdmin, refreshAllUsersForSuperAdmin]);
 
   // Role & Status Counts for Top Summary Cards
   const stats = useMemo(() => {
@@ -313,6 +328,7 @@ export const SuperAdminIDProfileManager: React.FC = () => {
     setEditArea(addr?.area || '');
     setEditPostalCode(addr?.postalCode || '1209');
     setEditFullAddress(addr?.fullServiceAddress || '');
+    setEditZoneId(resolveDealerZone(user).zone_id);
 
     setShowEditModal(true);
   };
@@ -341,55 +357,77 @@ export const SuperAdminIDProfileManager: React.FC = () => {
       actionType: 'edit_profile',
       variant: 'primary',
       onConfirm: () => {
-        executeSaveProfile();
+        void executeSaveProfile();
       }
     });
   };
 
-  const executeSaveProfile = () => {
-    if (!selectedUser) return;
+  const executeSaveProfile = async () => {
+    if (!selectedUser || isSavingProfile) return;
+    setIsSavingProfile(true);
 
-    const res = updateUserByAdmin(
-      selectedUser.id,
-      {
-        fullName: editFullName.trim(),
-        mobileNumber: editMobileNumber.trim(),
-        email: editEmail.trim(),
-        primaryRole: editPrimaryRole,
-        roles: editRoles.length > 0 ? editRoles : [editPrimaryRole],
-        businessType: editBusinessType,
-        accountStatus: editAccountStatus,
-        verificationStatus: editVerificationStatus,
-        sponsorId: editSponsorId.trim() || undefined,
-        referralId: editReferralId.trim() || undefined,
-        placementId: editPlacementId.trim() || undefined,
-        placementLeg: editPlacementLeg,
-        nationalId: editNationalId.trim() || undefined,
-        dateOfBirth: editDateOfBirth || undefined,
-        gender: editGender,
-        shopName: editShopName.trim() || undefined,
-        vehicleType: editVehicleType.trim() || undefined,
-        vehicleRegNumber: editVehicleRegNumber.trim() || undefined,
-        drivingLicenseNumber: editDrivingLicenseNumber.trim() || undefined
-      },
-      {
-        division: editDivision,
-        district: editDistrict,
-        upazila: editUpazila,
-        unionName: editUnionName,
-        ward: editWard,
-        area: editArea,
-        postalCode: editPostalCode,
-        fullServiceAddress: editFullAddress
+    const isDealerOrVendor =
+      editPrimaryRole === 'vendor_dealer_shop' ||
+      editPrimaryRole === 'dealer' ||
+      editPrimaryRole === 'vendor' ||
+      selectedUser.aponUniqueId?.startsWith('AponVDS-') ||
+      selectedUser.roles?.includes('dealer') ||
+      selectedUser.roles?.includes('vendor');
+    const resolvedZone = isDealerOrVendor
+      ? getZoneById(editZoneId) || getZoneByUpazila(editUpazila, editDistrict, editDivision)
+      : undefined;
+
+    try {
+      const res = await updateUserByAdmin(
+        selectedUser.id,
+        {
+          fullName: editFullName.trim(),
+          mobileNumber: editMobileNumber.trim(),
+          email: editEmail.trim(),
+          primaryRole: editPrimaryRole,
+          roles: editRoles.length > 0 ? editRoles : [editPrimaryRole],
+          businessType: editBusinessType,
+          accountStatus: editAccountStatus,
+          verificationStatus: editVerificationStatus,
+          sponsorId: editSponsorId.trim() || undefined,
+          referralId: editReferralId.trim() || undefined,
+          placementId: editPlacementId.trim() || undefined,
+          placementLeg: editPlacementLeg,
+          nationalId: editNationalId.trim() || undefined,
+          dateOfBirth: editDateOfBirth || undefined,
+          gender: editGender,
+          shopName: editShopName.trim() || undefined,
+          vehicleType: editVehicleType.trim() || undefined,
+          vehicleRegNumber: editVehicleRegNumber.trim() || undefined,
+          drivingLicenseNumber: editDrivingLicenseNumber.trim() || undefined,
+          ...(resolvedZone
+            ? {
+                zoneId: resolvedZone.zone_id,
+                zoneName: `${resolvedZone.zone_name_bn} (${resolvedZone.zone_name})`
+              }
+            : {})
+        },
+        {
+          division: resolvedZone ? resolvedZone.division_name : editDivision,
+          district: resolvedZone ? resolvedZone.district_name : editDistrict,
+          upazila: resolvedZone ? resolvedZone.upazila_name : editUpazila,
+          unionName: editUnionName,
+          ward: editWard,
+          area: editArea,
+          postalCode: editPostalCode,
+          fullServiceAddress: editFullAddress
+        }
+      );
+
+      if (res.success) {
+        showToast('success', res.message || 'ইউজার প্রোফাইল ডাটাবেজে সফলভাবে সংরক্ষিত হয়েছে!');
+        setShowEditModal(false);
+        setSelectedUser(null);
+      } else {
+        showToast('error', res.message || 'প্রোফাইল আপডেট করতে ব্যর্থ হয়েছে!');
       }
-    );
-
-    if (res.success) {
-      showToast('success', res.message);
-      setShowEditModal(false);
-      setSelectedUser(null);
-    } else {
-      showToast('error', res.message);
+    } finally {
+      setIsSavingProfile(false);
     }
   };
 
@@ -1543,6 +1581,22 @@ export const SuperAdminIDProfileManager: React.FC = () => {
                       <span className="font-bold text-neutral-900 dark:text-white">{selectedUser.shopName}</span>
                     </div>
                   )}
+                  {(selectedUser.primaryRole === 'dealer' ||
+                    selectedUser.primaryRole === 'vendor' ||
+                    selectedUser.primaryRole === 'vendor_dealer_shop' ||
+                    selectedUser.aponUniqueId?.startsWith('AponVDS-') ||
+                    selectedUser.zoneId ||
+                    selectedUser.zoneName) && (
+                    <div className="flex justify-between py-1 border-b border-neutral-200 dark:border-neutral-700/50">
+                      <span className="text-neutral-500">ডেলিভারি জোন:</span>
+                      <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                        {(() => {
+                          const z = resolveDealerZone(selectedUser);
+                          return `${z.zone_name_bn} (${z.zone_name}) [${z.zone_id}]`;
+                        })()}
+                      </span>
+                    </div>
+                  )}
                   {selectedUser.vehicleType && (
                     <div className="flex justify-between py-1 border-b border-neutral-200 dark:border-neutral-700/50">
                       <span className="text-neutral-500">যানবাহন:</span>
@@ -1726,29 +1780,61 @@ export const SuperAdminIDProfileManager: React.FC = () => {
                 </select>
               </div>
 
-              {/* Business Type Selector for Vendor/Dealer/Shop */}
+              {/* Business Type & Zone Selector for Vendor/Dealer/Shop */}
               {(editPrimaryRole === 'vendor_dealer_shop' ||
                 editPrimaryRole === 'dealer' ||
                 editPrimaryRole === 'vendor' ||
                 selectedUser.aponUniqueId?.startsWith('AponVDS-')) && (
-                <div className="space-y-1">
-                  <label className="font-bold text-neutral-700 dark:text-neutral-300 block flex items-center justify-between">
-                    <span>ব্যবসায়ের ধরন (Business Type)</span>
-                    <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold">ID অপরিবর্তিত থাকে</span>
-                  </label>
-                  <select
-                    value={editBusinessType}
-                    onChange={(e) => setEditBusinessType(e.target.value as BusinessType)}
-                    className="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 text-neutral-900 dark:text-white font-bold rounded-xl p-2.5 focus:ring-2 focus:ring-indigo-500"
-                  >
-                    <option value="Dealer">Dealer (ডিলার)</option>
-                    <option value="Vendor">Vendor (ভেন্ডর)</option>
-                    <option value="Shop">Shop (শপ / দোকান)</option>
-                  </select>
-                  <p className="text-[10px] text-neutral-500">
-                    ভেন্ডর/ডিলার/শপ পরিবর্তন করলেও স্থায়ী ইউনিক আইডি ({selectedUser.aponUniqueId || 'AponVDS-000001'}) অপরিবর্তিত থাকবে।
-                  </p>
-                </div>
+                <>
+                  <div className="space-y-1">
+                    <label className="font-bold text-neutral-700 dark:text-neutral-300 block flex items-center justify-between">
+                      <span>ব্যবসায়ের ধরন (Business Type)</span>
+                      <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold">ID অপরিবর্তিত থাকে</span>
+                    </label>
+                    <select
+                      value={editBusinessType}
+                      onChange={(e) => setEditBusinessType(e.target.value as BusinessType)}
+                      className="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 text-neutral-900 dark:text-white font-bold rounded-xl p-2.5 focus:ring-2 focus:ring-indigo-500"
+                    >
+                      <option value="Dealer">Dealer (ডিলার)</option>
+                      <option value="Vendor">Vendor (ভেন্ডর)</option>
+                      <option value="Shop">Shop (শপ / দোকান)</option>
+                    </select>
+                    <p className="text-[10px] text-neutral-500">
+                      ভেন্ডর/ডিলার/শপ পরিবর্তন করলেও স্থায়ী ইউনিক আইডি ({selectedUser.aponUniqueId || 'AponVDS-000001'}) অপরিবর্তিত থাকবে।
+                    </p>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label
+                      htmlFor="superadmin-id-edit-zone-select"
+                      className="font-bold text-neutral-700 dark:text-neutral-300 block"
+                    >
+                      ডেলিভারি / ডিলার জোন (Zone) *
+                    </label>
+                    <select
+                      id="superadmin-id-edit-zone-select"
+                      value={editZoneId}
+                      onChange={(e) => {
+                        const nextZoneId = e.target.value;
+                        setEditZoneId(nextZoneId);
+                        const z = getZoneById(nextZoneId);
+                        if (z) {
+                          setEditDivision(z.division_name);
+                          setEditDistrict(z.district_name);
+                          setEditUpazila(z.upazila_name);
+                        }
+                      }}
+                      className="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 text-neutral-900 dark:text-white font-bold rounded-xl p-2.5 focus:ring-2 focus:ring-indigo-500"
+                    >
+                      {getAllDeliveryZones().map((z) => (
+                        <option key={z.zone_id} value={z.zone_id}>
+                          {z.district_name} — {z.zone_name_bn} ({z.zone_name})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </>
               )}
 
               {/* Account Status */}
@@ -1976,10 +2062,11 @@ export const SuperAdminIDProfileManager: React.FC = () => {
               <button
                 type="button"
                 onClick={handleRequestSaveProfile}
-                className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-lg flex items-center gap-1.5 transition-all cursor-pointer"
+                disabled={isSavingProfile}
+                className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-extrabold text-xs rounded-xl shadow-lg flex items-center gap-1.5 transition-all cursor-pointer"
               >
-                <Save className="w-4 h-4" />
-                <span>সংরক্ষণ ও আপডেট করুন</span>
+                {isSavingProfile ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                <span>{isSavingProfile ? 'সংরক্ষণ হচ্ছে...' : 'সংরক্ষণ ও আপডেট করুন'}</span>
               </button>
             </div>
           </div>

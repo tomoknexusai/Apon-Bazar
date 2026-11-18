@@ -21,7 +21,7 @@ import type {
   WalletLedgerSummary,
   WalletTransaction
 } from '../types/networkMarketing';
-import type { UserRole } from '../types';
+import type { Gender, ServiceAddress, UserRole } from '../types';
 import {
   computePlacementLevel,
   computeSubtreeLegStats,
@@ -32,6 +32,7 @@ import {
   scryptVerifyPassword
 } from './companyAccountsAuthStore';
 import { createCrossProcessLock } from './fileLock';
+import { isValidEmailAddress } from './companySettingsStore';
 
 export interface PersistedCustomerAuthRecord {
   userId: string;
@@ -42,6 +43,10 @@ export interface PersistedCustomerAuthRecord {
   email: string;
   address?: string;
   nidNumber?: string;
+  profilePhotoUrl?: string;
+  dateOfBirth?: string;
+  gender?: Gender;
+  mandatoryAddress?: ServiceAddress;
   passwordHash: string;
   primaryRole: UserRole;
   roles: UserRole[];
@@ -490,6 +495,15 @@ export function createCustomerLedgerStore(customStorePath?: string) {
       });
     },
 
+    listCustomersSanitized: async (): Promise<
+      Omit<PersistedCustomerAuthRecord, 'passwordHash'>[]
+    > => {
+      return runWithLock(() => {
+        const payload = loadFromDisk();
+        return payload.customerAccounts.map(({ passwordHash: _omit, ...rest }) => rest);
+      });
+    },
+
     findAccountByUserIdOrCustomerId: async (
       idOrUserId: string
     ): Promise<Omit<PersistedCustomerAuthRecord, 'passwordHash'> | null> => {
@@ -507,6 +521,199 @@ export function createCustomerLedgerStore(customStorePath?: string) {
         if (!match) return null;
         const { passwordHash: _omit, ...sanitized } = match;
         return sanitized;
+      });
+    },
+
+    updateCustomerProfile: async (params: {
+      targetId: string;
+      allowAdminFields?: boolean;
+      updates: {
+        fullName?: string;
+        email?: string;
+        mobileNumber?: string;
+        profilePhotoUrl?: string;
+        nationalId?: string;
+        dateOfBirth?: string;
+        gender?: Gender;
+        address?: string;
+        mandatoryAddress?: Partial<ServiceAddress>;
+        accountStatus?: PersistedCustomerAuthRecord['accountStatus'];
+        roles?: UserRole[];
+        primaryRole?: UserRole;
+      };
+    }): Promise<{
+      success: boolean;
+      statusCode: number;
+      message: string;
+      account?: Omit<PersistedCustomerAuthRecord, 'passwordHash'>;
+    }> => {
+      return runWithLock(() => {
+        const clean = (params.targetId || '').trim().toLowerCase();
+        if (!clean) {
+          return { success: false, statusCode: 400, message: 'Customer ID আবশ্যক।' };
+        }
+        const payload = loadFromDisk();
+        const idx = payload.customerAccounts.findIndex(
+          (a) =>
+            a.userId.toLowerCase() === clean ||
+            a.customerId.toLowerCase() === clean ||
+            a.username.toLowerCase() === clean
+        );
+        if (idx === -1) {
+          return {
+            success: false,
+            statusCode: 404,
+            message: 'কাস্টমার অ্যাকাউন্ট ডাটাবেসে খুঁজে পাওয়া যায়নি।'
+          };
+        }
+
+        const existing = payload.customerAccounts[idx];
+        const up = params.updates || {};
+
+        const nextFullName =
+          up.fullName !== undefined ? String(up.fullName).trim() : existing.fullName;
+        if (!nextFullName) {
+          return {
+            success: false,
+            statusCode: 400,
+            message: 'পূর্ণ নাম (Full Name) খালি রাখা যাবে না।'
+          };
+        }
+
+        const nextEmail =
+          up.email !== undefined ? String(up.email).trim().toLowerCase() : existing.email;
+        if (!nextEmail || !isValidEmailAddress(nextEmail)) {
+          return {
+            success: false,
+            statusCode: 400,
+            message: 'সঠিক ও বৈধ ইমেইল ঠিকানা প্রদান করুন।'
+          };
+        }
+
+        let nextMobile = existing.mobileNumber;
+        if (up.mobileNumber !== undefined) {
+          const norm = normalizePhoneDigits(String(up.mobileNumber));
+          if (!norm || norm.length < 11) {
+            return {
+              success: false,
+              statusCode: 400,
+              message: 'সঠিক ১১ ডিজিটের বাংলাদেশ মোবাইল নম্বর প্রদান করুন।'
+            };
+          }
+          nextMobile = norm;
+        }
+
+        if (
+          payload.customerAccounts.some(
+            (a) =>
+              a.userId !== existing.userId &&
+              a.email &&
+              a.email.trim().toLowerCase() === nextEmail
+          )
+        ) {
+          return {
+            success: false,
+            statusCode: 409,
+            message: `ইমেইল '${nextEmail}' ইতিমধ্যেই অন্য একটি কাস্টমার অ্যাকাউন্টে ব্যবহৃত হচ্ছে।`
+          };
+        }
+
+        const nowIso = new Date().toISOString();
+        const nextMandatoryAddress: ServiceAddress | undefined = up.mandatoryAddress
+          ? (() => {
+              const mergedAddr: ServiceAddress = {
+                ...(existing.mandatoryAddress || {
+                  id: `addr-${existing.customerId}`,
+                  userId: existing.userId,
+                  title: 'Customer Address',
+                  userType: 'customer',
+                  division: '',
+                  district: '',
+                  upazila: '',
+                  unionName: '',
+                  area: existing.address || '',
+                  postalCode: '',
+                  isMandatoryServiceAddress: true,
+                  createdAt: nowIso,
+                  updatedAt: nowIso
+                }),
+                ...up.mandatoryAddress,
+                userId: existing.userId,
+                isMandatoryServiceAddress: true,
+                updatedAt: nowIso
+              };
+              if (!up.mandatoryAddress?.fullServiceAddress?.trim()) {
+                const parts = [
+                  mergedAddr.houseNo,
+                  mergedAddr.roadNo,
+                  mergedAddr.area,
+                  mergedAddr.ward,
+                  mergedAddr.unionName,
+                  mergedAddr.upazila,
+                  mergedAddr.district,
+                  mergedAddr.division
+                ]
+                  .map((p) => (p || '').trim())
+                  .filter(Boolean);
+                if (parts.length > 0) {
+                  mergedAddr.fullServiceAddress = mergedAddr.postalCode
+                    ? `${parts.join(', ')} (${mergedAddr.postalCode})`
+                    : parts.join(', ');
+                }
+              }
+              return mergedAddr;
+            })()
+          : existing.mandatoryAddress;
+
+        const derivedAddressStr =
+          nextMandatoryAddress?.fullServiceAddress ||
+          (up.address !== undefined ? String(up.address).trim() : existing.address);
+
+        const updated: PersistedCustomerAuthRecord = {
+          ...existing,
+          fullName: nextFullName,
+          email: nextEmail,
+          mobileNumber: nextMobile,
+          profilePhotoUrl:
+            up.profilePhotoUrl !== undefined
+              ? String(up.profilePhotoUrl).trim()
+              : existing.profilePhotoUrl,
+          nidNumber:
+            up.nationalId !== undefined ? String(up.nationalId).trim() : existing.nidNumber,
+          dateOfBirth:
+            up.dateOfBirth !== undefined ? String(up.dateOfBirth).trim() : existing.dateOfBirth,
+          gender: up.gender !== undefined ? up.gender : existing.gender,
+          address: derivedAddressStr,
+          mandatoryAddress: nextMandatoryAddress,
+          accountStatus:
+            params.allowAdminFields && up.accountStatus
+              ? up.accountStatus
+              : existing.accountStatus,
+          roles:
+            params.allowAdminFields && Array.isArray(up.roles) && up.roles.length > 0
+              ? up.roles
+              : existing.roles,
+          primaryRole:
+            params.allowAdminFields && up.primaryRole
+              ? up.primaryRole
+              : existing.primaryRole,
+          updatedAt: nowIso
+        };
+
+        const nextAccounts = [...payload.customerAccounts];
+        nextAccounts[idx] = updated;
+        savePayload({
+          ...payload,
+          customerAccounts: nextAccounts
+        });
+
+        const { passwordHash: _omit, ...sanitized } = updated;
+        return {
+          success: true,
+          statusCode: 200,
+          message: `কাস্টমার প্রোফাইল '${sanitized.fullName}' সফলভাবে ডাটাবেসে সংরক্ষিত হয়েছে!`,
+          account: sanitized
+        };
       });
     },
 

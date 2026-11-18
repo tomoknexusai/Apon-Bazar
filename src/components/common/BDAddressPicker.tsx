@@ -136,10 +136,21 @@ export const BDAddressPicker: React.FC<BDAddressPickerProps> = ({
   const defaultUpazila = initialAddress?.upazila || rawUpazilas[0]?.nameBn || 'ধানমন্ডি';
   const [upazila, setUpazila] = useState<string>(defaultUpazila);
 
-  // Available options calculation across all of Bangladesh
+  // Available options calculation across all of Bangladesh (preserving existing saved values)
   const divisionsToDisplay = BD_DIVISIONS;
-  const availableDistricts = rawDistricts;
-  const availableUpazilas = rawUpazilas;
+  const availableDistricts = useMemo(() => {
+    if (district && !rawDistricts.some((d) => d.nameBn === district || d.nameEn === district)) {
+      return [{ nameBn: district, nameEn: district, upazilas: [] }, ...rawDistricts];
+    }
+    return rawDistricts;
+  }, [rawDistricts, district]);
+
+  const availableUpazilas = useMemo(() => {
+    if (upazila && !rawUpazilas.some((u) => u.nameBn === upazila || u.nameEn === upazila)) {
+      return [{ nameBn: upazila, nameEn: upazila, unions: [] }, ...rawUpazilas];
+    }
+    return rawUpazilas;
+  }, [rawUpazilas, upazila]);
 
   // Auto-populate unions from official registry if not yet loaded in Level 2 DB
   useEffect(() => {
@@ -156,15 +167,22 @@ export const BDAddressPicker: React.FC<BDAddressPickerProps> = ({
   }, [dbUnions, division, district, upazila]);
 
   const rawAvailableUnions = getUnionsList(division, district, upazila);
-  const availableUnions = useMemo(() => {
+  const availableUnionsBase = useMemo(() => {
     if (dynamicUnions.length > 0) {
       return dynamicUnions;
     }
     return rawAvailableUnions;
   }, [rawAvailableUnions, dynamicUnions]);
 
-  const defaultUnion = initialAddress?.unionName || availableUnions[0]?.nameBn || (availableUnions.length > 0 ? availableUnions[0].nameBn : 'সদর');
+  const defaultUnion = initialAddress?.unionName || availableUnionsBase[0]?.nameBn || (availableUnionsBase.length > 0 ? availableUnionsBase[0].nameBn : 'সদর');
   const [unionName, setUnionName] = useState<string>(defaultUnion);
+
+  const availableUnions = useMemo(() => {
+    if (unionName && !availableUnionsBase.some((u) => u.nameBn === unionName || u.nameEn === unionName)) {
+      return [createUnion(unionName, unionName, initialAddress?.postalCode || '1200'), ...availableUnionsBase];
+    }
+    return availableUnionsBase;
+  }, [availableUnionsBase, unionName, initialAddress?.postalCode]);
 
   // Dynamic Wards from Level 2 Database
   const dynamicWards = useMemo(() => {
@@ -179,7 +197,7 @@ export const BDAddressPicker: React.FC<BDAddressPickerProps> = ({
   }, [dbWards, division, district, upazila, unionName]);
 
   const rawAvailableWards = getMergedWards(division, district, upazila, unionName);
-  const availableWards = useMemo(() => {
+  const availableWardsBase = useMemo(() => {
     const list = [...rawAvailableWards];
     dynamicWards.forEach((dw) => {
       if (!list.some((w) => w.wardNoBn === dw.wardNoBn)) {
@@ -189,8 +207,15 @@ export const BDAddressPicker: React.FC<BDAddressPickerProps> = ({
     return list;
   }, [rawAvailableWards, dynamicWards]);
 
-  const defaultWard = initialAddress?.ward || availableWards[0]?.wardNoBn || 'ওয়ার্ড ০১';
+  const defaultWard = initialAddress?.ward || availableWardsBase[0]?.wardNoBn || 'ওয়ার্ড ০১';
   const [ward, setWard] = useState<string>(defaultWard);
+
+  const availableWards = useMemo(() => {
+    if (ward && !availableWardsBase.some((w) => w.wardNoBn === ward || w.wardNoEn === ward)) {
+      return [{ wardNo: 0, wardNoBn: ward, wardNoEn: ward, wardName: ward }, ...availableWardsBase];
+    }
+    return availableWardsBase;
+  }, [availableWardsBase, ward]);
 
   // LEVEL 2 FIELDS
   const dynamicPlaces = useMemo(() => {

@@ -6,13 +6,19 @@
  * Project: ঘরের বাজার বিডি (Ghorer Bazar BD)
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth, normalizeBDMobileNumber } from '../../context/AuthContext';
 import { useNetworkMarketing } from '../../context/NetworkMarketingContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { ServiceAddress } from '../../types';
 import { LocationPicker } from '../common/LocationPicker';
 import { ProfilePictureUploader } from './ProfilePictureUploader';
+import {
+  getAllDeliveryZones,
+  getZoneById,
+  getZoneByUpazila,
+  resolveDealerZone
+} from '../../services/DeliveryZoneService';
 import {
   User,
   ShieldCheck,
@@ -40,11 +46,22 @@ interface NetworkMemberProfileModalProps {
   onClose: () => void;
 }
 
+const DEFAULT_MODAL_ADDRESS: Partial<ServiceAddress> = {
+  division: 'ঢাকা',
+  district: 'ঢাকা',
+  upazila: 'ধানমন্ডি',
+  unionName: 'ধানমন্ডি আ/এ',
+  ward: 'ওয়ার্ড ০১',
+  area: 'সোবহানবাগ রোড',
+  postalCode: '1209',
+  fullServiceAddress: 'সোবহানবাগ রোড, ওয়ার্ড ০১, ধানমন্ডি আ/এ, ধানমন্ডি, ঢাকা'
+};
+
 export const NetworkMemberProfileModal: React.FC<NetworkMemberProfileModalProps> = ({
   isOpen,
   onClose
 }) => {
-  const { currentUser, allUsers, updateProfile, updateServiceAddress } = useAuth();
+  const { currentUser, allUsers, updateProfile, updateServiceAddress, refreshCurrentUserProfile } = useAuth();
   const { currentMember, ownCompanyMemberId, updateMemberProfile } = useNetworkMarketing();
   const { language, t } = useLanguage();
 
@@ -54,32 +71,101 @@ export const NetworkMemberProfileModal: React.FC<NetworkMemberProfileModalProps>
   const [fullName, setFullName] = useState(currentUser?.fullName || '');
   const [email, setEmail] = useState(currentUser?.email || '');
   const [mobileNumber, setMobileNumber] = useState(currentUser?.mobileNumber || '');
-  const [profilePhotoUrl, setProfilePhotoUrl] = useState(
-    currentUser?.profilePhotoUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=250'
+  const [profilePhotoUrl, setProfilePhotoUrl] = useState(currentUser?.profilePhotoUrl || '');
+  const [gender, setGender] = useState<'male' | 'female' | 'other'>(currentUser?.gender || 'male');
+  const [dateOfBirth, setDateOfBirth] = useState(currentUser?.dateOfBirth || '');
+  const [nationalId, setNationalId] = useState(currentUser?.nationalId || '');
+
+  // Role-specific editable fields
+  const [shopName, setShopName] = useState(currentUser?.shopName || '');
+  const [businessType, setBusinessType] = useState<'Vendor' | 'Dealer' | 'Shop'>(
+    currentUser?.businessType || 'Dealer'
+  );
+  const [tradeLicenseNumber, setTradeLicenseNumber] = useState(currentUser?.tradeLicenseNumber || '');
+  const [vehicleType, setVehicleType] = useState(currentUser?.vehicleType || '');
+  const [vehicleRegNumber, setVehicleRegNumber] = useState(currentUser?.vehicleRegNumber || '');
+  const [drivingLicenseNumber, setDrivingLicenseNumber] = useState(
+    currentUser?.drivingLicenseNumber || ''
   );
 
-  // Address State
+  // Address & Dealer Zone State
   const [address, setAddress] = useState<Partial<ServiceAddress>>(
-    currentUser?.mandatoryAddress || {
-      division: 'ঢাকা',
-      district: 'ঢাকা',
-      upazila: 'ধানমন্ডি',
-      unionName: 'ধানমন্ডি আ/এ',
-      ward: 'ওয়ার্ড ০১',
-      area: 'সোবহানবাগ রোড',
-      postalCode: '1209',
-      fullServiceAddress: 'সোবহানবাগ রোড, ওয়ার্ড ০১, ধানমন্ডি আ/এ, ধানমন্ডি, ঢাকা'
-    }
+    currentUser?.mandatoryAddress || DEFAULT_MODAL_ADDRESS
+  );
+  const [dealerZoneId, setDealerZoneId] = useState<string>(() =>
+    resolveDealerZone(currentUser).zone_id
   );
 
   // Validation & OTP State
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
   const [showOtpPrompt, setShowOtpPrompt] = useState(false);
   const [otpInput, setOtpInput] = useState('1234');
   const [pendingNormalizedMobile, setPendingNormalizedMobile] = useState('');
 
+  useEffect(() => {
+    if (isOpen && currentUser?.id && currentUser.id !== 'guest') {
+      void refreshCurrentUserProfile(currentUser.id);
+    }
+  }, [isOpen, currentUser?.id, refreshCurrentUserProfile]);
+
+  useEffect(() => {
+    if (!currentUser || isEditing) return;
+    setFullName(currentUser.fullName || '');
+    setEmail(currentUser.email || '');
+    setMobileNumber(currentUser.mobileNumber || '');
+    setProfilePhotoUrl(currentUser.profilePhotoUrl || '');
+    setGender(currentUser.gender || 'male');
+    setDateOfBirth(currentUser.dateOfBirth || '');
+    setNationalId(currentUser.nationalId || '');
+    setShopName(currentUser.shopName || '');
+    setBusinessType(currentUser.businessType || 'Dealer');
+    setTradeLicenseNumber(currentUser.tradeLicenseNumber || '');
+    setVehicleType(currentUser.vehicleType || '');
+    setVehicleRegNumber(currentUser.vehicleRegNumber || '');
+    setDrivingLicenseNumber(currentUser.drivingLicenseNumber || '');
+    if (currentUser.mandatoryAddress) {
+      setAddress(currentUser.mandatoryAddress);
+    }
+    setDealerZoneId(resolveDealerZone(currentUser).zone_id);
+  }, [
+    isEditing,
+    currentUser?.id,
+    currentUser?.fullName,
+    currentUser?.email,
+    currentUser?.mobileNumber,
+    currentUser?.profilePhotoUrl,
+    currentUser?.gender,
+    currentUser?.dateOfBirth,
+    currentUser?.nationalId,
+    currentUser?.shopName,
+    currentUser?.businessType,
+    currentUser?.tradeLicenseNumber,
+    currentUser?.vehicleType,
+    currentUser?.vehicleRegNumber,
+    currentUser?.drivingLicenseNumber,
+    currentUser?.zoneId,
+    currentUser?.zoneName,
+    currentUser?.mandatoryAddress
+  ]);
+
   if (!isOpen || !currentUser) return null;
+
+  const roleBadgeLabel =
+    currentUser.primaryRole === 'super_admin'
+      ? 'Super Admin'
+      : currentUser.primaryRole === 'admin'
+      ? 'Admin'
+      : currentUser.primaryRole === 'dealer' || currentUser.primaryRole === 'vendor'
+      ? 'Dealer / Vendor'
+      : currentUser.primaryRole === 'delivery_rider' || currentUser.primaryRole === 'rider'
+      ? 'Delivery Rider'
+      : currentUser.primaryRole === 'operations_partner' || currentUser.primaryRole === 'operations_officer'
+      ? 'Operations Partner'
+      : currentUser.isNetworkActive || currentUser.primaryRole === 'network_member'
+      ? 'Network Active Member'
+      : 'Customer';
 
   // Permanent Locked Values
   const permanentMemberId =
@@ -108,27 +194,42 @@ export const NetworkMemberProfileModal: React.FC<NetworkMemberProfileModalProps>
       })
     : '—';
 
+  const isVendorOrDealer =
+    currentUser.primaryRole === 'vendor' ||
+    currentUser.primaryRole === 'dealer' ||
+    currentUser.primaryRole === 'vendor_dealer_shop';
+  const isDeliveryRider =
+    currentUser.primaryRole === 'delivery_rider' ||
+    currentUser.primaryRole === 'rider' ||
+    currentUser.primaryRole === 'delivery_man';
+  const locationUserType: 'customer' | 'vendor' | 'operations_partner' | 'delivery_rider' | 'admin' =
+    isVendorOrDealer
+      ? 'vendor'
+      : isDeliveryRider
+      ? 'delivery_rider'
+      : currentUser.primaryRole === 'operations_partner' || currentUser.primaryRole === 'operations_officer'
+      ? 'operations_partner'
+      : currentUser.primaryRole === 'admin' || currentUser.primaryRole === 'super_admin'
+      ? 'admin'
+      : 'customer';
+
   // Handle Edit Profile Button Click
   const handleStartEdit = () => {
-    setFullName(currentUser.fullName);
-    setEmail(currentUser.email);
-    setMobileNumber(currentUser.mobileNumber);
-    setProfilePhotoUrl(
-      currentUser.profilePhotoUrl ||
-        'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=250'
-    );
-    setAddress(
-      currentUser.mandatoryAddress || {
-        division: 'ঢাকা',
-        district: 'ঢাকা',
-        upazila: 'ধানমন্ডি',
-        unionName: 'ধানমন্ডি আ/এ',
-        ward: 'ওয়ার্ড ০১',
-        area: 'সোবহানবাগ রোড',
-        postalCode: '1209',
-        fullServiceAddress: 'সোবহানবাগ রোড, ওয়ার্ড ০১, ধানমন্ডি আ/এ, ধানমন্ডি, ঢাকা'
-      }
-    );
+    setFullName(currentUser.fullName || '');
+    setEmail(currentUser.email || '');
+    setMobileNumber(currentUser.mobileNumber || '');
+    setProfilePhotoUrl(currentUser.profilePhotoUrl || '');
+    setGender(currentUser.gender || 'male');
+    setDateOfBirth(currentUser.dateOfBirth || '');
+    setNationalId(currentUser.nationalId || '');
+    setShopName(currentUser.shopName || '');
+    setBusinessType(currentUser.businessType || 'Dealer');
+    setTradeLicenseNumber(currentUser.tradeLicenseNumber || '');
+    setVehicleType(currentUser.vehicleType || '');
+    setVehicleRegNumber(currentUser.vehicleRegNumber || '');
+    setDrivingLicenseNumber(currentUser.drivingLicenseNumber || '');
+    setAddress(currentUser.mandatoryAddress || DEFAULT_MODAL_ADDRESS);
+    setDealerZoneId(resolveDealerZone(currentUser).zone_id);
     setErrorMessage('');
     setSuccessMessage('');
     setShowOtpPrompt(false);
@@ -136,13 +237,23 @@ export const NetworkMemberProfileModal: React.FC<NetworkMemberProfileModalProps>
   };
 
   // Initiate Save Validation
-  const handlePreSave = (e: React.FormEvent) => {
+  const handlePreSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
     setSuccessMessage('');
 
     if (!fullName.trim()) {
       setErrorMessage(language === 'bn' ? 'পূর্ণ নাম প্রদান করা আবশ্যক।' : 'Full Name is required.');
+      return;
+    }
+
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+      setErrorMessage(
+        language === 'bn'
+          ? 'অনুগ্রহ করে একটি সঠিক ইমেইল ঠিকানা প্রদান করুন।'
+          : 'Please enter a valid email address.'
+      );
       return;
     }
 
@@ -183,11 +294,11 @@ export const NetworkMemberProfileModal: React.FC<NetworkMemberProfileModalProps>
     }
 
     // Mobile not changed -> Save directly
-    executeProfileSave(normMobile);
+    await executeProfileSave(normMobile);
   };
 
   // Verify OTP and Complete Profile Save
-  const handleVerifyOtpAndSave = (e: React.FormEvent) => {
+  const handleVerifyOtpAndSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!otpInput.trim() || otpInput.length < 4) {
       setErrorMessage(
@@ -198,43 +309,129 @@ export const NetworkMemberProfileModal: React.FC<NetworkMemberProfileModalProps>
       return;
     }
 
-    // Verify simulated OTP (1234 or any 4 digits)
     setShowOtpPrompt(false);
-    executeProfileSave(pendingNormalizedMobile || normalizeBDMobileNumber(mobileNumber));
+    await executeProfileSave(pendingNormalizedMobile || normalizeBDMobileNumber(mobileNumber));
   };
 
-  // Core Save Execution
-  const executeProfileSave = (finalMobile: string) => {
-    // 1. Update Auth Profile
-    updateProfile({
-      fullName: fullName.trim(),
-      email: email.trim(),
-      mobileNumber: finalMobile,
-      profilePhotoUrl: profilePhotoUrl.trim()
-    });
-
-    // 2. Update Service Address
-    if (address) {
-      updateServiceAddress(address);
-    }
-
-    // 3. Update Network Marketing Member List (Preserves ID, Sponsor, Placement, Tree Position & Commissions)
-    updateMemberProfile(currentUser.id, {
-      fullName: fullName.trim(),
-      mobile: finalMobile,
-      email: email.trim(),
-      avatarUrl: profilePhotoUrl.trim()
-    });
-
-    // 4. State & UI Refresh
-    setSuccessMessage(
-      language === 'bn'
-        ? '✅ প্রোফাইল তথ্য সফলভাবে আপডেট করা হয়েছে!'
-        : 'Profile information updated successfully!'
-    );
-    setIsEditing(false);
-    setShowOtpPrompt(false);
+  // Core Save Execution (Awaits Real Server DB Persistence)
+  const executeProfileSave = async (finalMobile: string) => {
+    setIsSaving(true);
     setErrorMessage('');
+    setSuccessMessage('');
+
+    try {
+      const nowIso = new Date().toISOString();
+      const baseAddr = currentUser.mandatoryAddress || {
+        id: `addr-${currentUser.id}`,
+        userId: currentUser.id,
+        title: 'Service Address',
+        userType: locationUserType,
+        division: address?.division || 'ঢাকা',
+        district: address?.district || 'ঢাকা',
+        upazila: address?.upazila || 'ধানমন্ডি',
+        unionName: address?.unionName || 'ধানমন্ডি আ/এ',
+        area: address?.area || 'সোবহানবাগ রোড',
+        postalCode: address?.postalCode || '1209',
+        isMandatoryServiceAddress: true,
+        createdAt: nowIso,
+        updatedAt: nowIso
+      };
+      const mergedAddress = address
+        ? {
+            ...baseAddr,
+            ...address,
+            id: baseAddr.id,
+            userId: currentUser.id,
+            userType: locationUserType,
+            isMandatoryServiceAddress: true,
+            createdAt: baseAddr.createdAt,
+            updatedAt: nowIso
+          }
+        : currentUser.mandatoryAddress;
+
+      const resolvedZone = isVendorOrDealer
+        ? getZoneById(dealerZoneId) ||
+          getZoneByUpazila(mergedAddress?.upazila, mergedAddress?.district, mergedAddress?.division)
+        : undefined;
+
+      const syncedAddress =
+        isVendorOrDealer && resolvedZone && mergedAddress
+          ? {
+              ...mergedAddress,
+              division: resolvedZone.division_name,
+              district: resolvedZone.district_name,
+              upazila: resolvedZone.upazila_name
+            }
+          : mergedAddress;
+
+      // 1. Update Auth Profile + Service Address on Server DB
+      const profileRes = await updateProfile({
+        fullName: fullName.trim(),
+        email: email.trim(),
+        mobileNumber: finalMobile,
+        profilePhotoUrl: profilePhotoUrl.trim(),
+        gender,
+        dateOfBirth: dateOfBirth.trim() || undefined,
+        nationalId: nationalId.trim() || undefined,
+        latitude: syncedAddress?.latitude ?? currentUser.latitude,
+        longitude: syncedAddress?.longitude ?? currentUser.longitude,
+        ...(isVendorOrDealer
+          ? {
+              shopName: shopName.trim() || undefined,
+              businessType,
+              tradeLicenseNumber: tradeLicenseNumber.trim() || undefined,
+              ...(resolvedZone
+                ? {
+                    zoneId: resolvedZone.zone_id,
+                    zoneName: `${resolvedZone.zone_name_bn} (${resolvedZone.zone_name})`
+                  }
+                : {})
+            }
+          : {}),
+        ...(isDeliveryRider
+          ? {
+              vehicleType: vehicleType.trim() || undefined,
+              vehicleRegNumber: vehicleRegNumber.trim() || undefined,
+              drivingLicenseNumber: drivingLicenseNumber.trim() || undefined
+            }
+          : {}),
+        mandatoryAddress: syncedAddress
+      });
+
+      if (!profileRes.success) {
+        setErrorMessage(
+          profileRes.message ||
+            (language === 'bn'
+              ? 'প্রোফাইল তথ্য ডাটাবেজে সংরক্ষণ করা যায়নি।'
+              : 'Failed to save profile to database.')
+        );
+        return;
+      }
+
+      // 2. Update Network Marketing Member List (Preserves ID, Sponsor, Placement, Tree Position & Commissions)
+      updateMemberProfile(currentUser.id, {
+        fullName: fullName.trim(),
+        mobile: finalMobile,
+        email: email.trim(),
+        avatarUrl: profilePhotoUrl.trim(),
+        gender,
+        dateOfBirth: dateOfBirth.trim() || undefined,
+        address: mergedAddress?.fullServiceAddress || mergedAddress?.area,
+        mandatoryAddress: mergedAddress
+      });
+
+      // 3. State & UI Refresh
+      setSuccessMessage(
+        language === 'bn'
+          ? '✅ প্রোফাইল তথ্য সফলভাবে ডাটাবেজে সংরক্ষিত হয়েছে!'
+          : 'Profile information saved to database successfully!'
+      );
+      setIsEditing(false);
+      setShowOtpPrompt(false);
+      setErrorMessage('');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -265,7 +462,7 @@ export const NetworkMemberProfileModal: React.FC<NetworkMemberProfileModalProps>
                 </h2>
                 <BadgeCheck className="w-4 h-4 text-emerald-500" />
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-300">
-                  Network Active Member
+                  {roleBadgeLabel}
                 </span>
               </div>
               <p className="text-xs text-emerald-600 dark:text-emerald-400 font-mono font-bold mt-0.5 flex items-center gap-1">
@@ -389,9 +586,60 @@ export const NetworkMemberProfileModal: React.FC<NetworkMemberProfileModalProps>
                 </div>
 
                 <div>
+                  <span className="text-[10px] text-neutral-500 dark:text-neutral-400 font-semibold block">🪪 NID / National ID</span>
+                  <span className="font-bold text-neutral-900 dark:text-white text-xs font-mono">
+                    {currentUser.nationalId || '—'}
+                  </span>
+                </div>
+
+                <div>
+                  <span className="text-[10px] text-neutral-500 dark:text-neutral-400 font-semibold block">🎂 Date of Birth & Gender</span>
+                  <span className="font-bold text-neutral-900 dark:text-white text-xs">
+                    {currentUser.dateOfBirth || '—'}{currentUser.gender ? ` (${currentUser.gender})` : ''}
+                  </span>
+                </div>
+
+                <div>
                   <span className="text-[10px] text-neutral-500 dark:text-neutral-400 font-semibold block">🟢 Account Status</span>
                   <span className="font-bold text-emerald-600 dark:text-emerald-400 text-xs">Active & Verified</span>
                 </div>
+
+                {isVendorOrDealer && (
+                  <>
+                    <div>
+                      <span className="text-[10px] text-neutral-500 dark:text-neutral-400 font-semibold block">🏪 Shop / Outlet Name</span>
+                      <span className="font-bold text-neutral-900 dark:text-white text-xs">{currentUser.shopName || '—'}</span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-neutral-500 dark:text-neutral-400 font-semibold block">📄 Trade License No.</span>
+                      <span className="font-bold text-neutral-900 dark:text-white text-xs font-mono">{currentUser.tradeLicenseNumber || '—'}</span>
+                    </div>
+                    <div className="sm:col-span-2">
+                      <span className="text-[10px] text-neutral-500 dark:text-neutral-400 font-semibold block">📍 Delivery / Dealer Zone</span>
+                      <span className="font-bold text-emerald-700 dark:text-emerald-400 text-xs">
+                        {(() => {
+                          const z = resolveDealerZone(currentUser);
+                          return `${z.zone_name_bn} (${z.zone_name}) — ${z.district_name}, ${z.division_name} [${z.zone_id}]`;
+                        })()}
+                      </span>
+                    </div>
+                  </>
+                )}
+
+                {isDeliveryRider && (
+                  <>
+                    <div>
+                      <span className="text-[10px] text-neutral-500 dark:text-neutral-400 font-semibold block">🏍️ Vehicle Type & Reg No.</span>
+                      <span className="font-bold text-neutral-900 dark:text-white text-xs">
+                        {currentUser.vehicleType || '—'}{currentUser.vehicleRegNumber ? ` (${currentUser.vehicleRegNumber})` : ''}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-neutral-500 dark:text-neutral-400 font-semibold block">🪪 Driving License No.</span>
+                      <span className="font-bold text-neutral-900 dark:text-white text-xs font-mono">{currentUser.drivingLicenseNumber || '—'}</span>
+                    </div>
+                  </>
+                )}
               </div>
 
               {currentUser.mandatoryAddress && (
@@ -401,9 +649,19 @@ export const NetworkMemberProfileModal: React.FC<NetworkMemberProfileModalProps>
                     <span>Mandatory Service Address</span>
                   </span>
                   <p className="font-bold text-neutral-900 dark:text-white text-xs">
-                    {currentUser.mandatoryAddress.area}, {currentUser.mandatoryAddress.unionName},{' '}
-                    {currentUser.mandatoryAddress.upazila}, {currentUser.mandatoryAddress.district} -{' '}
-                    {currentUser.mandatoryAddress.postalCode}
+                    {currentUser.mandatoryAddress.fullServiceAddress ||
+                      [
+                        currentUser.mandatoryAddress.houseNo,
+                        currentUser.mandatoryAddress.roadNo,
+                        currentUser.mandatoryAddress.area,
+                        currentUser.mandatoryAddress.unionName,
+                        currentUser.mandatoryAddress.upazila,
+                        currentUser.mandatoryAddress.district,
+                        currentUser.mandatoryAddress.division,
+                        currentUser.mandatoryAddress.postalCode
+                      ]
+                        .filter(Boolean)
+                        .join(', ')}
                   </p>
                 </div>
               )}
@@ -433,212 +691,396 @@ export const NetworkMemberProfileModal: React.FC<NetworkMemberProfileModalProps>
         )}
 
         {/* ----------------------------------------------------------------- */}
-        {/* EDIT MODE FORM                                                   */}
+        {/* EDIT MODE FORM (Separated from nested LocationPicker form)        */}
         {/* ----------------------------------------------------------------- */}
         {isEditing && (
-          <form onSubmit={handlePreSave} className="space-y-4">
-            
-            <div className="p-3 bg-amber-50 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800 rounded-2xl text-[11px] text-amber-900 dark:text-amber-200 flex items-start gap-2">
-              <Lock className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-              <div>
-                <strong>🔒 নিরাপত্তা নির্দেশিকা:</strong> স্থায়ী মেম্বার আইডি, স্পন্সর আইডি, প্লেসমেন্ট আইডি, বাইনারি অবস্থান ও কমিশন হিস্ট্রি চিরস্থায়ী এবং পরিবর্তনঅযোগ্য। কেবল আপনার ব্যক্তিগত যোগাযোগের তথ্য ও সার্ভিস এড্রেস আপডেট করতে পারবেন।
-              </div>
-            </div>
-
-            {/* Locked Read-Only Fields Container */}
-            <div className="p-3.5 bg-neutral-100 dark:bg-neutral-800/80 rounded-2xl border border-neutral-200 dark:border-neutral-700/80 space-y-2">
-              <span className="font-extrabold text-[11px] text-neutral-500 dark:text-neutral-400 uppercase tracking-wider block flex items-center gap-1">
-                <Lock className="w-3.5 h-3.5 text-rose-500" />
-                <span>{language === 'bn' ? 'স্থায়ী মেম্বারশিপ ও নেটওয়ার্ক আইডি (পরিবর্তনঅযোগ্য)' : 'Permanent Locked Credentials'}</span>
-              </span>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+          <div className="space-y-4">
+            <form id="member-profile-edit-form" onSubmit={handlePreSave} className="space-y-4">
+              <div className="p-3 bg-amber-50 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800 rounded-2xl text-[11px] text-amber-900 dark:text-amber-200 flex items-start gap-2">
+                <Lock className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
                 <div>
-                  <label className="text-[10px] text-neutral-500 dark:text-neutral-400 block font-semibold">
-                    Permanent Member ID
-                  </label>
-                  <input
-                    type="text"
-                    value={permanentMemberId}
-                    disabled
-                    readOnly
-                    className="w-full bg-neutral-200/80 dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-xl px-2.5 py-1.5 font-mono font-black text-emerald-600 dark:text-emerald-400 cursor-not-allowed text-xs"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-[10px] text-neutral-500 dark:text-neutral-400 block font-semibold">
-                    Network Member ID
-                  </label>
-                  <input
-                    type="text"
-                    value={networkMemberId}
-                    disabled
-                    readOnly
-                    className="w-full bg-neutral-200/80 dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-xl px-2.5 py-1.5 font-mono font-bold text-neutral-700 dark:text-neutral-300 cursor-not-allowed text-xs"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-[10px] text-neutral-500 dark:text-neutral-400 block font-semibold">
-                    Sponsor ID
-                  </label>
-                  <input
-                    type="text"
-                    value={sponsorId}
-                    disabled
-                    readOnly
-                    className="w-full bg-neutral-200/80 dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-xl px-2.5 py-1.5 font-mono font-bold text-sky-600 dark:text-sky-400 cursor-not-allowed text-xs"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-[10px] text-neutral-500 dark:text-neutral-400 block font-semibold">
-                    Placement ID
-                  </label>
-                  <input
-                    type="text"
-                    value={placementId}
-                    disabled
-                    readOnly
-                    className="w-full bg-neutral-200/80 dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-xl px-2.5 py-1.5 font-mono font-bold text-indigo-600 dark:text-indigo-400 cursor-not-allowed text-xs"
-                  />
-                </div>
-
-                <div className="sm:col-span-2 md:col-span-2">
-                  <label className="text-[10px] text-neutral-500 dark:text-neutral-400 block font-semibold">
-                    Registration Date
-                  </label>
-                  <input
-                    type="text"
-                    value={registrationDate}
-                    disabled
-                    readOnly
-                    className="w-full bg-neutral-200/80 dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-xl px-2.5 py-1.5 font-bold text-neutral-700 dark:text-neutral-300 cursor-not-allowed text-xs"
-                  />
+                  <strong>🔒 নিরাপত্তা নির্দেশিকা:</strong> স্থায়ী মেম্বার আইডি, স্পন্সর আইডি, প্লেসমেন্ট আইডি, বাইনারি অবস্থান ও কমিশন হিস্ট্রি চিরস্থায়ী এবং পরিবর্তনঅযোগ্য। কেবল আপনার ব্যক্তিগত যোগাযোগের তথ্য ও সার্ভিস এড্রেস আপডেট করতে পারবেন।
                 </div>
               </div>
-            </div>
 
-            {/* Editable Profile Fields */}
-            <div className="p-4 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl space-y-3">
-              <span className="font-bold text-neutral-900 dark:text-white block border-b border-neutral-100 dark:border-neutral-800 pb-2 flex items-center gap-2">
-                <Edit3 className="w-4 h-4 text-emerald-600" />
-                <span>{language === 'bn' ? 'সম্পাদনাযোগ্য প্রোফাইল ফিল্ডসমূহ' : 'Editable Profile Fields'}</span>
-              </span>
+              {/* Locked Read-Only Fields Container */}
+              <div className="p-3.5 bg-neutral-100 dark:bg-neutral-800/80 rounded-2xl border border-neutral-200 dark:border-neutral-700/80 space-y-2">
+                <span className="font-extrabold text-[11px] text-neutral-500 dark:text-neutral-400 uppercase tracking-wider block flex items-center gap-1">
+                  <Lock className="w-3.5 h-3.5 text-rose-500" />
+                  <span>{language === 'bn' ? 'স্থায়ী মেম্বারশিপ ও নেটওয়ার্ক আইডি (পরিবর্তনঅযোগ্য)' : 'Permanent Locked Credentials'}</span>
+                </span>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {/* Full Name */}
-                <div className="space-y-1">
-                  <label className="font-bold text-neutral-700 dark:text-neutral-300 block">
-                    {t('fullName')} <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
-                    required
-                    className="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-xl p-2.5 text-neutral-900 dark:text-white font-medium focus:ring-2 focus:ring-emerald-500 text-xs"
-                  />
-                </div>
-
-                {/* Email Address */}
-                <div className="space-y-1">
-                  <label className="font-bold text-neutral-700 dark:text-neutral-300 block">
-                    ইমেইল ঠিকানা <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    required
-                    className="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-xl p-2.5 text-neutral-900 dark:text-white font-medium focus:ring-2 focus:ring-emerald-500 text-xs"
-                  />
-                </div>
-
-                {/* Mobile Number with Format Validation Note */}
-                <div className="space-y-1">
-                  <label className="font-bold text-neutral-700 dark:text-neutral-300 block flex items-center justify-between">
-                    <span>{t('mobileNumber')} <span className="text-rose-500">*</span></span>
-                    <span className="text-[10px] text-emerald-600 font-semibold">BD Format 01XXXXXXXXX</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={mobileNumber}
-                    onChange={(e) => setMobileNumber(e.target.value)}
-                    required
-                    placeholder="017XXXXXXXX"
-                    className="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-xl p-2.5 text-neutral-900 dark:text-white font-bold focus:ring-2 focus:ring-emerald-500 text-xs font-mono"
-                  />
-                  <span className="text-[10px] text-neutral-400 block">
-                    * মোবাইল নম্বর পরিবর্তন করলে নতুন নম্বরে OTP যাচাইকরণ আবশ্যক।
-                  </span>
-                </div>
-
-                {/* Profile Photo Management */}
-                <div className="space-y-2 sm:col-span-2 p-3 bg-neutral-50 dark:bg-neutral-800/60 rounded-xl border border-neutral-200 dark:border-neutral-700">
-                  <label className="font-bold text-neutral-700 dark:text-neutral-300 block flex items-center justify-between">
-                    <span className="flex items-center gap-1.5">
-                      <Camera className="w-3.5 h-3.5 text-emerald-500" />
-                      <span>প্রোফাইল ছবি পরিবর্তন (ক্যামেরা ও গ্যালারি)</span>
-                    </span>
-                    <span className="text-[10px] text-emerald-600 font-semibold">অটো স্কয়ার ক্রপ</span>
-                  </label>
-                  
-                  <div className="flex flex-col sm:flex-row items-center gap-3">
-                    <ProfilePictureUploader
-                      currentPhotoUrl={profilePhotoUrl}
-                      onPhotoSaved={(newUrl) => setProfilePhotoUrl(newUrl)}
-                      size="sm"
-                      showUploadButton={true}
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                  <div>
+                    <label className="text-[10px] text-neutral-500 dark:text-neutral-400 block font-semibold">
+                      Permanent Member ID
+                    </label>
+                    <input
+                      type="text"
+                      value={permanentMemberId}
+                      disabled
+                      readOnly
+                      className="w-full bg-neutral-200/80 dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-xl px-2.5 py-1.5 font-mono font-black text-emerald-600 dark:text-emerald-400 cursor-not-allowed text-xs"
                     />
-                    
-                    <div className="flex-1 w-full space-y-1">
-                      <label className="text-[10px] text-neutral-400 block font-medium">
-                        সরাসরি ইমেজ লিংক (ঐচ্ছিক):
-                      </label>
-                      <input
-                        type="text"
-                        value={profilePhotoUrl}
-                        onChange={(e) => setProfilePhotoUrl(e.target.value)}
-                        placeholder="https://..."
-                        className="w-full bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-xl p-2 text-neutral-900 dark:text-white font-mono text-xs focus:ring-2 focus:ring-emerald-500"
-                      />
-                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] text-neutral-500 dark:text-neutral-400 block font-semibold">
+                      Network Member ID
+                    </label>
+                    <input
+                      type="text"
+                      value={networkMemberId}
+                      disabled
+                      readOnly
+                      className="w-full bg-neutral-200/80 dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-xl px-2.5 py-1.5 font-mono font-bold text-neutral-700 dark:text-neutral-300 cursor-not-allowed text-xs"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] text-neutral-500 dark:text-neutral-400 block font-semibold">
+                      Sponsor ID
+                    </label>
+                    <input
+                      type="text"
+                      value={sponsorId}
+                      disabled
+                      readOnly
+                      className="w-full bg-neutral-200/80 dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-xl px-2.5 py-1.5 font-mono font-bold text-sky-600 dark:text-sky-400 cursor-not-allowed text-xs"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] text-neutral-500 dark:text-neutral-400 block font-semibold">
+                      Placement ID
+                    </label>
+                    <input
+                      type="text"
+                      value={placementId}
+                      disabled
+                      readOnly
+                      className="w-full bg-neutral-200/80 dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-xl px-2.5 py-1.5 font-mono font-bold text-indigo-600 dark:text-indigo-400 cursor-not-allowed text-xs"
+                    />
+                  </div>
+
+                  <div className="sm:col-span-2 md:col-span-2">
+                    <label className="text-[10px] text-neutral-500 dark:text-neutral-400 block font-semibold">
+                      Registration Date
+                    </label>
+                    <input
+                      type="text"
+                      value={registrationDate}
+                      disabled
+                      readOnly
+                      className="w-full bg-neutral-200/80 dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-xl px-2.5 py-1.5 font-bold text-neutral-700 dark:text-neutral-300 cursor-not-allowed text-xs"
+                    />
                   </div>
                 </div>
               </div>
 
-              {/* Mandatory Service Address Component */}
-              <div className="pt-3 border-t border-neutral-100 dark:border-neutral-800">
-                <LocationPicker
-                  initialAddress={address}
-                  onSaveAddress={(updatedAddr) => setAddress(updatedAddr)}
-                  title="বাধ্যতামূলক সার্ভিস ডেলিভারি এড্রেস"
-                />
+              {/* Editable Profile Fields */}
+              <div className="p-4 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl space-y-3">
+                <span className="font-bold text-neutral-900 dark:text-white block border-b border-neutral-100 dark:border-neutral-800 pb-2 flex items-center gap-2">
+                  <Edit3 className="w-4 h-4 text-emerald-600" />
+                  <span>{language === 'bn' ? 'সম্পাদনাযোগ্য প্রোফাইল ফিল্ডসমূহ' : 'Editable Profile Fields'}</span>
+                </span>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {/* Full Name */}
+                  <div className="space-y-1">
+                    <label className="font-bold text-neutral-700 dark:text-neutral-300 block">
+                      {t('fullName')} <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={fullName}
+                      onChange={(e) => setFullName(e.target.value)}
+                      required
+                      className="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-xl p-2.5 text-neutral-900 dark:text-white font-medium focus:ring-2 focus:ring-emerald-500 text-xs"
+                    />
+                  </div>
+
+                  {/* Email Address */}
+                  <div className="space-y-1">
+                    <label className="font-bold text-neutral-700 dark:text-neutral-300 block">
+                      ইমেইল ঠিকানা <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      required
+                      className="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-xl p-2.5 text-neutral-900 dark:text-white font-medium focus:ring-2 focus:ring-emerald-500 text-xs"
+                    />
+                  </div>
+
+                  {/* Mobile Number with Format Validation Note */}
+                  <div className="space-y-1">
+                    <label className="font-bold text-neutral-700 dark:text-neutral-300 block flex items-center justify-between">
+                      <span>{t('mobileNumber')} <span className="text-rose-500">*</span></span>
+                      <span className="text-[10px] text-emerald-600 font-semibold">BD Format 01XXXXXXXXX</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={mobileNumber}
+                      onChange={(e) => setMobileNumber(e.target.value)}
+                      required
+                      placeholder="017XXXXXXXX"
+                      className="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-xl p-2.5 text-neutral-900 dark:text-white font-bold focus:ring-2 focus:ring-emerald-500 text-xs font-mono"
+                    />
+                    <span className="text-[10px] text-neutral-400 block">
+                      * মোবাইল নম্বর পরিবর্তন করলে নতুন নম্বরে OTP যাচাইকরণ আবশ্যক।
+                    </span>
+                  </div>
+
+                  {/* National ID */}
+                  <div className="space-y-1">
+                    <label className="font-bold text-neutral-700 dark:text-neutral-300 block">
+                      {t('nationalId')} (NID)
+                    </label>
+                    <input
+                      type="text"
+                      value={nationalId}
+                      onChange={(e) => setNationalId(e.target.value)}
+                      placeholder="১০, ১৩ বা ১৭ ডিজিট NID"
+                      className="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-xl p-2.5 text-neutral-900 dark:text-white font-mono text-xs focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+
+                  {/* Date of Birth */}
+                  <div className="space-y-1">
+                    <label className="font-bold text-neutral-700 dark:text-neutral-300 block">
+                      {t('dateOfBirth')}
+                    </label>
+                    <input
+                      type="date"
+                      value={dateOfBirth}
+                      onChange={(e) => setDateOfBirth(e.target.value)}
+                      className="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-xl p-2.5 text-neutral-900 dark:text-white font-medium text-xs focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+
+                  {/* Gender */}
+                  <div className="space-y-1">
+                    <label className="font-bold text-neutral-700 dark:text-neutral-300 block">
+                      {t('gender')}
+                    </label>
+                    <select
+                      value={gender}
+                      onChange={(e) => setGender(e.target.value as 'male' | 'female' | 'other')}
+                      className="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-xl p-2.5 text-neutral-900 dark:text-white font-medium text-xs focus:ring-2 focus:ring-emerald-500"
+                    >
+                      <option value="male">{t('male')}</option>
+                      <option value="female">{t('female')}</option>
+                      <option value="other">{t('other')}</option>
+                    </select>
+                  </div>
+
+                  {/* Conditional Vendor / Dealer Fields */}
+                  {isVendorOrDealer && (
+                    <>
+                      <div className="space-y-1">
+                        <label className="font-bold text-neutral-700 dark:text-neutral-300 block">
+                          দোকান / শোরুমের নাম (Shop Name)
+                        </label>
+                        <input
+                          type="text"
+                          value={shopName}
+                          onChange={(e) => setShopName(e.target.value)}
+                          placeholder="দোকান বা আউটলেটের নাম"
+                          className="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-xl p-2.5 text-neutral-900 dark:text-white font-medium text-xs focus:ring-2 focus:ring-emerald-500"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="font-bold text-neutral-700 dark:text-neutral-300 block">
+                          ব্যবসার ধরন (Business Type)
+                        </label>
+                        <select
+                          value={businessType}
+                          onChange={(e) => setBusinessType(e.target.value as 'Vendor' | 'Dealer' | 'Shop')}
+                          className="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-xl p-2.5 text-neutral-900 dark:text-white font-medium text-xs focus:ring-2 focus:ring-emerald-500"
+                        >
+                          <option value="Dealer">Dealer</option>
+                          <option value="Vendor">Vendor</option>
+                          <option value="Shop">Shop</option>
+                        </select>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="font-bold text-neutral-700 dark:text-neutral-300 block">
+                          ট্রেড লাইসেন্স নম্বর (Trade License No.)
+                        </label>
+                        <input
+                          type="text"
+                          value={tradeLicenseNumber}
+                          onChange={(e) => setTradeLicenseNumber(e.target.value)}
+                          placeholder="TRAD/..."
+                          className="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-xl p-2.5 text-neutral-900 dark:text-white font-mono text-xs focus:ring-2 focus:ring-emerald-500"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label
+                          htmlFor="member-modal-dealer-zone-select"
+                          className="font-bold text-neutral-700 dark:text-neutral-300 block"
+                        >
+                          ডেলিভারি / ডিলার জোন (Delivery Zone) *
+                        </label>
+                        <select
+                          id="member-modal-dealer-zone-select"
+                          value={dealerZoneId}
+                          onChange={(e) => {
+                            const nextZoneId = e.target.value;
+                            setDealerZoneId(nextZoneId);
+                            const z = getZoneById(nextZoneId);
+                            if (z) {
+                              setAddress((prev) => ({
+                                ...prev,
+                                division: z.division_name,
+                                district: z.district_name,
+                                upazila: z.upazila_name
+                              }));
+                            }
+                          }}
+                          className="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-xl p-2.5 text-neutral-900 dark:text-white font-bold text-xs focus:ring-2 focus:ring-emerald-500"
+                        >
+                          {getAllDeliveryZones().map((z) => (
+                            <option key={z.zone_id} value={z.zone_id}>
+                              {z.district_name} — {z.zone_name_bn} ({z.zone_name})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </>
+                  )}
+
+                  {/* Conditional Delivery Rider Fields */}
+                  {isDeliveryRider && (
+                    <>
+                      <div className="space-y-1">
+                        <label className="font-bold text-neutral-700 dark:text-neutral-300 block">
+                          যানবাহনের ধরন (Vehicle Type)
+                        </label>
+                        <input
+                          type="text"
+                          value={vehicleType}
+                          onChange={(e) => setVehicleType(e.target.value)}
+                          placeholder="যেমন: মোটরসাইকেল (125cc)"
+                          className="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-xl p-2.5 text-neutral-900 dark:text-white font-medium text-xs focus:ring-2 focus:ring-emerald-500"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="font-bold text-neutral-700 dark:text-neutral-300 block">
+                          গাড়ির রেজিস্ট্রেশন নম্বর (Vehicle Reg No.)
+                        </label>
+                        <input
+                          type="text"
+                          value={vehicleRegNumber}
+                          onChange={(e) => setVehicleRegNumber(e.target.value)}
+                          placeholder="ঢাকা মেট্রো-ল-..."
+                          className="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-xl p-2.5 text-neutral-900 dark:text-white font-mono text-xs focus:ring-2 focus:ring-emerald-500"
+                        />
+                      </div>
+
+                      <div className="space-y-1 sm:col-span-2">
+                        <label className="font-bold text-neutral-700 dark:text-neutral-300 block">
+                          ড্রাইভিং লাইসেন্স নম্বর (Driving License No.)
+                        </label>
+                        <input
+                          type="text"
+                          value={drivingLicenseNumber}
+                          onChange={(e) => setDrivingLicenseNumber(e.target.value)}
+                          placeholder="DL/..."
+                          className="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-xl p-2.5 text-neutral-900 dark:text-white font-mono text-xs focus:ring-2 focus:ring-emerald-500"
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  {/* Profile Photo Management */}
+                  <div className="space-y-2 sm:col-span-2 p-3 bg-neutral-50 dark:bg-neutral-800/60 rounded-xl border border-neutral-200 dark:border-neutral-700">
+                    <label className="font-bold text-neutral-700 dark:text-neutral-300 block flex items-center justify-between">
+                      <span className="flex items-center gap-1.5">
+                        <Camera className="w-3.5 h-3.5 text-emerald-500" />
+                        <span>প্রোফাইল ছবি পরিবর্তন (ক্যামেরা ও গ্যালারি)</span>
+                      </span>
+                      <span className="text-[10px] text-emerald-600 font-semibold">অটো স্কয়ার ক্রপ</span>
+                    </label>
+                    
+                    <div className="flex flex-col sm:flex-row items-center gap-3">
+                      <ProfilePictureUploader
+                        currentPhotoUrl={profilePhotoUrl}
+                        onPhotoSaved={(newUrl) => setProfilePhotoUrl(newUrl)}
+                        size="sm"
+                        showUploadButton={true}
+                      />
+                      
+                      <div className="flex-1 w-full space-y-1">
+                        <label className="text-[10px] text-neutral-400 block font-medium">
+                          সরাসরি ইমেজ লিংক (ঐচ্ছিক):
+                        </label>
+                        <input
+                          type="text"
+                          value={profilePhotoUrl}
+                          onChange={(e) => setProfilePhotoUrl(e.target.value)}
+                          placeholder="https://..."
+                          className="w-full bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-xl p-2 text-neutral-900 dark:text-white font-mono text-xs focus:ring-2 focus:ring-emerald-500"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
+            </form>
+
+            {/* Mandatory Service Address Component (Sibling form, NOT nested) */}
+            <div className="p-4 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl">
+              <LocationPicker
+                initialAddress={address}
+                userType={locationUserType}
+                onAddressChange={(updated) => {
+                  setAddress((prev) => ({ ...prev, ...updated }));
+                  if (isVendorOrDealer && (updated.upazila || updated.district)) {
+                    const matched = getZoneByUpazila(updated.upazila, updated.district, updated.division);
+                    if (matched) setDealerZoneId(matched.zone_id);
+                  }
+                }}
+                onSaveAddress={async (updatedAddr) => {
+                  setAddress(updatedAddr);
+                  if (isVendorOrDealer) {
+                    const matched = getZoneByUpazila(updatedAddr.upazila, updatedAddr.district, updatedAddr.division);
+                    if (matched) setDealerZoneId(matched.zone_id);
+                  }
+                  return await updateServiceAddress(updatedAddr);
+                }}
+                title="বাধ্যতামূলক সার্ভিস ডেলিভারি এড্রেস"
+              />
             </div>
 
-            {/* Submit Action Buttons */}
+            {/* Submit Action Buttons linked to member-profile-edit-form */}
             <div className="flex items-center justify-end gap-3 pt-2 border-t border-neutral-100 dark:border-neutral-800">
               <button
                 type="button"
                 onClick={() => setIsEditing(false)}
-                className="px-4 py-2 bg-neutral-200 dark:bg-neutral-800 text-neutral-800 dark:text-neutral-200 font-bold rounded-xl text-xs hover:bg-neutral-300 dark:hover:bg-neutral-700 transition-colors"
+                disabled={isSaving}
+                className="px-4 py-2 bg-neutral-200 dark:bg-neutral-800 text-neutral-800 dark:text-neutral-200 font-bold rounded-xl text-xs hover:bg-neutral-300 dark:hover:bg-neutral-700 transition-colors disabled:opacity-50"
               >
                 {t('cancel')}
               </button>
 
               <button
                 type="submit"
-                className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl text-xs shadow-md transition-all flex items-center gap-2"
+                form="member-profile-edit-form"
+                disabled={isSaving}
+                className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-extrabold rounded-xl text-xs shadow-md transition-all flex items-center gap-2"
               >
-                <CheckCircle2 className="w-4 h-4" />
-                <span>আপডেট ও সংরক্ষণ করুন</span>
+                {isSaving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                <span>{isSaving ? 'সংরক্ষণ হচ্ছে...' : 'আপডেট ও সংরক্ষণ করুন'}</span>
               </button>
             </div>
-
-          </form>
+          </div>
         )}
 
         {/* ----------------------------------------------------------------- */}

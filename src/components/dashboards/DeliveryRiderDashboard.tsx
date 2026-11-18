@@ -47,8 +47,9 @@ export const DeliveryRiderDashboard: React.FC = () => {
   } = useECommerce();
 
   const [isOnline, setIsOnline] = useState(true);
-  const [vehicleType] = useState('মোটরসাইকেল (125cc)');
-  const [licenseNumber] = useState('DL/DHK/2026/99381');
+  const vehicleType = currentUser?.vehicleType || 'মোটরসাইকেল (125cc)';
+  const licenseNumber = currentUser?.drivingLicenseNumber || 'DL/DHK/2026/99381';
+  const vehicleRegNumber = currentUser?.vehicleRegNumber || '';
 
   // Derive Rider's Registered Zone and Operation Office
   const riderZone = getZoneByUpazila(
@@ -677,6 +678,13 @@ export const DeliveryRiderDashboard: React.FC = () => {
               <span className="font-semibold text-neutral-500 dark:text-neutral-400">যানবাহনের ধরন:</span>
               <p className="font-bold text-neutral-900 dark:text-white">{vehicleType}</p>
             </div>
+
+            {vehicleRegNumber && (
+              <div className="space-y-1">
+                <span className="font-semibold text-neutral-500 dark:text-neutral-400">গাড়ির রেজিস্ট্রেশন নম্বর:</span>
+                <p className="font-bold text-neutral-900 dark:text-white font-mono">{vehicleRegNumber}</p>
+              </div>
+            )}
 
             <div className="space-y-1">
               <span className="font-semibold text-neutral-500 dark:text-neutral-400">ড্রাইভিং লাইসেন্স নম্বর:</span>

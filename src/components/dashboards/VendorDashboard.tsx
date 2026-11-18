@@ -3,48 +3,213 @@
  * Project: APON BAZAR (আপন বাজার)
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { useECommerce } from '../../context/ECommerceContext';
 import { DashboardHeader } from '../common/DashboardHeader';
 import { VendorProductFormModal } from '../shop/VendorProductFormModal';
 import { OrderRoutingManagerHub } from '../shop/OrderRoutingManagerHub';
-import { getZoneForDealer } from '../../services/DeliveryZoneService';
+import {
+  getAllDeliveryZones,
+  getZoneById,
+  resolveDealerZone
+} from '../../services/DeliveryZoneService';
 import { getProductStockLocation } from '../../services/DealerInventoryService';
 import { calculateProductPricing } from '../../lib/pricing';
-import { Store, ShieldCheck, MapPin, Award, TrendingUp, CheckCircle2, Plus, Package, ShoppingBag, Compass, Building2 } from 'lucide-react';
+import { Store, ShieldCheck, MapPin, Award, TrendingUp, CheckCircle2, Plus, Package, ShoppingBag, Compass, Building2, AlertCircle, Loader2 } from 'lucide-react';
 import { motion } from 'motion/react';
 
 export const VendorDashboard: React.FC = () => {
-  const { currentUser } = useAuth();
+  const { currentUser, updateProfile, refreshCurrentUserProfile } = useAuth();
   const { language, t } = useLanguage();
   const { products, orders, updateOrderStatus } = useECommerce();
 
-  const [shopName, setShopName] = useState(() => 
-    currentUser?.shopName || currentUser?.mandatoryAddress?.shopName || 'Apon Bazar ডিলার প্রিমিয়াম শপ'
+  const allZones = React.useMemo(
+    () =>
+      [...getAllDeliveryZones()].sort((a, b) =>
+        `${a.district_name} ${a.upazila_name}`.localeCompare(`${b.district_name} ${b.upazila_name}`, 'bn')
+      ),
+    []
+  );
+
+  // Resolve Dealer Zone strictly from saved zoneId/zoneName first, then mandatoryAddress
+  const dealerZone = resolveDealerZone({
+    zoneId: currentUser?.zoneId,
+    zoneName: currentUser?.zoneName,
+    mandatoryAddress: currentUser?.mandatoryAddress
+  });
+
+  const [shopName, setShopName] = useState(() =>
+    currentUser?.shopName || currentUser?.mandatoryAddress?.shopName || ''
   );
   const [dealerEmail, setDealerEmail] = useState(() =>
     currentUser?.email || ''
   );
-  const [tradeLicense, setTradeLicense] = useState('TRAD/CTG/2026/88492');
+  const [dealerMobile, setDealerMobile] = useState(() =>
+    currentUser?.mobileNumber || ''
+  );
+  const [tradeLicense, setTradeLicense] = useState(() =>
+    currentUser?.tradeLicenseNumber || ''
+  );
   const [commissionTier, setCommissionTier] = useState('প্ল্যাটিনাম ডিলার (8.5% Commission)');
-  const [outletAddress, setOutletAddress] = useState(() => 
-    currentUser?.mandatoryAddress?.fullServiceAddress || 'দোকান ১২, নিউ মার্কেট লেন, আন্দরকিল্লা, কোতোয়ালী, চট্টগ্রাম'
+  const [selectedZoneId, setSelectedZoneId] = useState(() => dealerZone.zone_id);
+  const [outletAddress, setOutletAddress] = useState(() =>
+    currentUser?.mandatoryAddress?.fullServiceAddress ||
+      (currentUser?.mandatoryAddress?.area
+        ? [
+            currentUser.mandatoryAddress.area,
+            currentUser.mandatoryAddress.unionName,
+            currentUser.mandatoryAddress.upazila,
+            currentUser.mandatoryAddress.district
+          ]
+            .filter(Boolean)
+            .join(', ')
+        : '')
   );
   const [isApproved, setIsApproved] = useState(true);
   const [savedSuccess, setSavedSuccess] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
 
-  // Automatically determine Dealer Zone from Dealer's registered location
-  const dealerZone = getZoneForDealer(currentUser?.mandatoryAddress);
+  useEffect(() => {
+    if (currentUser?.id && currentUser.id !== 'guest') {
+      void refreshCurrentUserProfile(currentUser.id);
+    }
+  }, [currentUser?.id, refreshCurrentUserProfile]);
 
-  const vendorProducts = products.filter((p) => (currentUser?.id && p.vendorId === currentUser.id) || p.vendorShopName?.includes('চট্টগ্রাম') || true);
+  useEffect(() => {
+    if (!currentUser) return;
+    const resolved = resolveDealerZone({
+      zoneId: currentUser.zoneId,
+      zoneName: currentUser.zoneName,
+      mandatoryAddress: currentUser.mandatoryAddress
+    });
+    setSelectedZoneId(resolved.zone_id);
+    setShopName(currentUser.shopName || currentUser.mandatoryAddress?.shopName || '');
+    setDealerEmail(currentUser.email || '');
+    setDealerMobile(currentUser.mobileNumber || '');
+    setTradeLicense(currentUser.tradeLicenseNumber || '');
+    setOutletAddress(
+      currentUser.mandatoryAddress?.fullServiceAddress ||
+        (currentUser.mandatoryAddress?.area
+          ? [
+              currentUser.mandatoryAddress.area,
+              currentUser.mandatoryAddress.unionName,
+              currentUser.mandatoryAddress.upazila,
+              currentUser.mandatoryAddress.district
+            ]
+              .filter(Boolean)
+              .join(', ')
+          : `${resolved.zone_point_name}, ${resolved.upazila_name}, ${resolved.district_name}`)
+    );
+  }, [
+    currentUser?.id,
+    currentUser?.zoneId,
+    currentUser?.zoneName,
+    currentUser?.shopName,
+    currentUser?.email,
+    currentUser?.mobileNumber,
+    currentUser?.tradeLicenseNumber,
+    currentUser?.mandatoryAddress?.division,
+    currentUser?.mandatoryAddress?.district,
+    currentUser?.mandatoryAddress?.upazila,
+    currentUser?.mandatoryAddress?.area,
+    currentUser?.mandatoryAddress?.fullServiceAddress,
+    currentUser?.mandatoryAddress?.shopName
+  ]);
 
-  const handleSaveVendor = (e: React.FormEvent) => {
+  const vendorProducts = products.filter(
+    (p) => !currentUser?.id || !p.vendorId || p.vendorId === currentUser.id || true
+  );
+
+  const handleZoneSelectionChange = (newZoneId: string) => {
+    setSelectedZoneId(newZoneId);
+    const chosenZone = getZoneById(newZoneId);
+    if (!chosenZone) return;
+    const legacyDefaultCtg = 'দোকান ১২, নিউ মার্কেট লেন, আন্দরকিল্লা, কোতোয়ালী, চট্টগ্রাম';
+    if (
+      !outletAddress.trim() ||
+      outletAddress.trim() === legacyDefaultCtg ||
+      (dealerZone.zone_id !== chosenZone.zone_id &&
+        outletAddress.trim() === `${dealerZone.zone_point_name}, ${dealerZone.upazila_name}, ${dealerZone.district_name}`)
+    ) {
+      setOutletAddress(`${chosenZone.zone_point_name}, ${chosenZone.upazila_name}, ${chosenZone.district_name}`);
+    }
+  };
+
+  const handleSaveVendor = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSavedSuccess(true);
-    setTimeout(() => setSavedSuccess(false), 3000);
+    setSaveError('');
+    setSavedSuccess(false);
+
+    if (!shopName.trim()) {
+      setSaveError('দোকান বা শোরুমের নাম প্রদান করা আবশ্যক।');
+      return;
+    }
+    if (!dealerEmail.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(dealerEmail.trim())) {
+      setSaveError('অনুগ্রহ করে একটি সঠিক ইমেইল ঠিকানা প্রদান করুন।');
+      return;
+    }
+    if (!tradeLicense.trim()) {
+      setSaveError('ট্রেড লাইসেন্স নম্বর প্রদান করা আবশ্যক।');
+      return;
+    }
+    if (!outletAddress.trim()) {
+      setSaveError('আউটলেটের পূর্ণ ঠিকানা প্রদান করা আবশ্যক।');
+      return;
+    }
+
+    const chosenZone = getZoneById(selectedZoneId) || dealerZone;
+
+    setIsSaving(true);
+    try {
+      const nowIso = new Date().toISOString();
+      const baseAddr = currentUser?.mandatoryAddress || {
+        id: `addr-${currentUser?.id || 'dealer'}`,
+        userId: currentUser?.id || 'dealer',
+        title: 'Store Outlet',
+        userType: 'vendor' as const,
+        division: chosenZone.division_name,
+        district: chosenZone.district_name,
+        upazila: chosenZone.upazila_name,
+        unionName: '',
+        area: outletAddress.trim(),
+        postalCode: '1000',
+        isMandatoryServiceAddress: true,
+        createdAt: nowIso,
+        updatedAt: nowIso
+      };
+      const res = await updateProfile({
+        shopName: shopName.trim(),
+        email: dealerEmail.trim(),
+        ...(dealerMobile.trim() ? { mobileNumber: dealerMobile.trim() } : {}),
+        tradeLicenseNumber: tradeLicense.trim(),
+        zoneId: chosenZone.zone_id,
+        zoneName: `${chosenZone.zone_name_bn} (${chosenZone.zone_name})`,
+        mandatoryAddress: {
+          ...baseAddr,
+          division: chosenZone.division_name,
+          district: chosenZone.district_name,
+          upazila: chosenZone.upazila_name,
+          shopName: shopName.trim(),
+          area: outletAddress.trim(),
+          fullServiceAddress: outletAddress.trim(),
+          updatedAt: nowIso
+        }
+      });
+
+      if (!res.success) {
+        setSaveError(res.message || 'আউটলেট তথ্য ডাটাবেজে সংরক্ষণ করা যায়নি।');
+        return;
+      }
+
+      setSavedSuccess(true);
+      setTimeout(() => setSavedSuccess(false), 3500);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -198,6 +363,37 @@ export const VendorDashboard: React.FC = () => {
 
             <div className="space-y-1">
               <label className="font-semibold text-neutral-700 dark:text-neutral-300">
+                মোবাইল নম্বর (Mobile Number)
+              </label>
+              <input
+                type="text"
+                value={dealerMobile}
+                onChange={(e) => setDealerMobile(e.target.value)}
+                placeholder="01XXXXXXXXX"
+                className="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-xl p-2.5 text-neutral-900 dark:text-white font-mono"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="font-semibold text-neutral-700 dark:text-neutral-300">
+                ডেলিভারি জোন (Dealer Zone) *
+              </label>
+              <select
+                id="vendor-zone-select"
+                value={selectedZoneId}
+                onChange={(e) => handleZoneSelectionChange(e.target.value)}
+                className="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-xl p-2.5 text-neutral-900 dark:text-white font-semibold"
+              >
+                {allZones.map((z) => (
+                  <option key={z.zone_id} value={z.zone_id}>
+                    {z.district_name} — {z.zone_name_bn} ({z.zone_name})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="space-y-1 md:col-span-2">
+              <label className="font-semibold text-neutral-700 dark:text-neutral-300">
                 আউটলেটের ঠিকানা
               </label>
               <input
@@ -210,10 +406,14 @@ export const VendorDashboard: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex items-center justify-between pt-2">
-            {savedSuccess ? (
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-2">
+            {saveError ? (
+              <span className="text-rose-600 font-bold flex items-center gap-1">
+                <AlertCircle className="w-4 h-4 shrink-0" /> {saveError}
+              </span>
+            ) : savedSuccess ? (
               <span className="text-emerald-600 font-bold flex items-center gap-1">
-                <CheckCircle2 className="w-4 h-4" /> আউটলেট তথ্য সংরক্ষিত হয়েছে!
+                <CheckCircle2 className="w-4 h-4" /> আউটলেট তথ্য ডাটাবেজে সংরক্ষিত হয়েছে!
               </span>
             ) : (
               <span className="text-neutral-400 text-[11px]">
@@ -223,9 +423,11 @@ export const VendorDashboard: React.FC = () => {
 
             <button
               type="submit"
-              className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl shadow transition-colors"
+              disabled={isSaving}
+              className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold rounded-xl shadow transition-colors flex items-center justify-center gap-1.5"
             >
-              {t('save')}
+              {isSaving && <Loader2 className="w-4 h-4 animate-spin" />}
+              <span>{isSaving ? 'সংরক্ষণ হচ্ছে...' : t('save')}</span>
             </button>
           </div>
         </form>
@@ -306,7 +508,9 @@ export const VendorDashboard: React.FC = () => {
           <p className="text-2xl font-black text-neutral-900 dark:text-white">
             ৮ টি ইউনিয়ন
           </p>
-          <span className="text-[10px] text-neutral-400">চট্টগ্রাম কোতোয়ালী হাব</span>
+          <span className="text-[10px] text-neutral-400">
+            {dealerZone.district_name} {dealerZone.upazila_name} হাব
+          </span>
         </div>
       </div>
 

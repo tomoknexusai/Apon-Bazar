@@ -1465,6 +1465,10 @@ export interface ManagedStaffAccount {
   fullName: string;
   email: string;
   mobileNumber: string;
+  profilePhotoUrl?: string;
+  nationalId?: string;
+  dateOfBirth?: string;
+  gender?: Gender;
   roleGroup: 'rider' | 'dealer';
   primaryRole: UserRole;
   roles: UserRole[];

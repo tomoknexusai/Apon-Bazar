@@ -70,6 +70,7 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
   const [compressedFileSize, setCompressedFileSize] = useState<number | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [showRemoveConfirm, setShowRemoveConfirm] = useState(false);
   const [feedbackMsg, setFeedbackMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Hidden file inputs
@@ -232,8 +233,8 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
     return null;
   };
 
-  // Save picture to profile
-  const handleSavePicture = () => {
+  // Save picture to profile (Server DB + local state)
+  const handleSavePicture = async () => {
     const finalImage = getActiveSelectedImage();
     if (!finalImage || !currentUser) {
       setFeedbackMsg({
@@ -244,10 +245,19 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
     }
 
     setIsSaving(true);
+    setFeedbackMsg(null);
     try {
-      updateProfile({
+      const res = await updateProfile({
         profilePhotoUrl: finalImage
       });
+
+      if (!res.success) {
+        setFeedbackMsg({
+          type: 'error',
+          text: res.message || (isBn ? 'ছবি সংরক্ষণ করতে ব্যর্থ হয়েছে।' : 'Failed to save profile picture.')
+        });
+        return;
+      }
 
       if (currentUser.id) {
         updateMemberProfile(currentUser.id, {
@@ -259,9 +269,10 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
         onPhotoSaved(finalImage);
       }
 
+      setImageError(false);
       setFeedbackMsg({
         type: 'success',
-        text: isBn ? '✅ প্রোফাইল ছবি সফলভাবে আপডেট করা হয়েছে!' : '✅ Profile picture updated successfully!'
+        text: isBn ? '✅ প্রোফাইল ছবি সফলভাবে ডাটাবেজে সংরক্ষিত হয়েছে!' : '✅ Profile picture saved to database!'
       });
 
       // Close modal & reset temporary state
@@ -272,7 +283,7 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
         setUrlInput('');
         setImageError(false);
         setFeedbackMsg(null);
-      }, 1000);
+      }, 900);
     } catch (err) {
       console.error('Failed to save profile picture:', err);
       setFeedbackMsg({
@@ -284,13 +295,28 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
     }
   };
 
-  // Reset / Remove Photo
+  // Reset / Remove Photo (two-step inline confirmation without window.confirm)
   const handleRemovePhoto = () => {
     if (!currentUser) return;
-    if (window.confirm(isBn ? 'আপনি কি প্রোফাইল ছবি মুছে ফেলে ডিফল্ট আইকন রাখতে চান?' : 'Remove profile picture and use default icon?')) {
-      updateProfile({
+    setShowRemoveConfirm(true);
+  };
+
+  const confirmRemovePhoto = async () => {
+    if (!currentUser) return;
+    setIsSaving(true);
+    setFeedbackMsg(null);
+    try {
+      const res = await updateProfile({
         profilePhotoUrl: ''
       });
+      if (!res.success) {
+        setFeedbackMsg({
+          type: 'error',
+          text: res.message || (isBn ? 'ছবি সরাতে ব্যর্থ হয়েছে।' : 'Failed to remove picture.')
+        });
+        return;
+      }
+
       if (currentUser.id) {
         updateMemberProfile(currentUser.id, {
           avatarUrl: ''
@@ -303,12 +329,15 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
       setUploadedDataUrl(null);
       setUrlInput('');
       setImageError(true);
+      setShowRemoveConfirm(false);
       setIsModalOpen(false);
       setFeedbackMsg({
         type: 'success',
         text: isBn ? 'প্রোফাইল ছবি সরানো হয়েছে।' : 'Profile picture removed.'
       });
       setTimeout(() => setFeedbackMsg(null), 3000);
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -642,15 +671,39 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
                       {isBn ? 'ছবি নির্বাচন করলে অপ্টিমাইজড সাইজ প্রদর্শিত হবে।' : 'Select an image to preview optimization metrics.'}
                     </div>
                   )}
-                  {savedPhoto && (
+                  {savedPhoto && !showRemoveConfirm && (
                     <button
                       type="button"
                       onClick={handleRemovePhoto}
+                      disabled={isSaving}
                       className="text-[11px] text-rose-600 hover:text-rose-700 dark:text-rose-400 font-bold flex items-center gap-1 pt-1 cursor-pointer"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                       <span>{isBn ? 'বর্তমান ছবি মুছে ফেলুন (Reset)' : 'Remove current picture'}</span>
                     </button>
+                  )}
+                  {savedPhoto && showRemoveConfirm && (
+                    <div className="flex flex-wrap items-center gap-2 pt-1.5">
+                      <span className="text-[11px] font-bold text-rose-600 dark:text-rose-400">
+                        {isBn ? 'ছবি মুছে ফেলতে নিশ্চিত?' : 'Confirm remove photo?'}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={confirmRemovePhoto}
+                        disabled={isSaving}
+                        className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-[10px] font-bold cursor-pointer disabled:opacity-50"
+                      >
+                        {isBn ? 'হ্যাঁ, মুছুন' : 'Yes, Remove'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowRemoveConfirm(false)}
+                        disabled={isSaving}
+                        className="px-2.5 py-1 bg-neutral-200 dark:bg-neutral-700 text-neutral-800 dark:text-neutral-200 rounded-lg text-[10px] font-bold cursor-pointer"
+                      >
+                        {isBn ? 'বাতিল' : 'Cancel'}
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>

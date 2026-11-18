@@ -15,6 +15,7 @@ import path from 'path';
 import type {
   AccountStatus,
   CredentialAuditLogRecord,
+  Gender,
   ManagedStaffAccount,
   ServiceAddress,
   UserRole
@@ -25,6 +26,166 @@ import {
 } from './companyAccountsAuthStore';
 import { isValidEmailAddress } from './companySettingsStore';
 import { getEmailProviderConfig } from './emailService';
+import {
+  getZoneById,
+  getZoneByUpazila,
+  resolveZoneFromNameOrText,
+  type DeliveryZone
+} from '../services/DeliveryZoneService';
+
+function syncDealerZoneAndAddress(params: {
+  isDealer: boolean;
+  existingZoneId?: string;
+  existingZoneName?: string;
+  existingAddress?: ServiceAddress;
+  incomingZoneId?: string;
+  incomingZoneName?: string;
+  incomingAddress?: Partial<ServiceAddress>;
+  fallbackUserId: string;
+  nowIso: string;
+}): {
+  error?: string;
+  zoneId?: string;
+  zoneName?: string;
+  mandatoryAddress?: ServiceAddress;
+} {
+  const cleanIncomingId =
+    params.incomingZoneId !== undefined ? String(params.incomingZoneId).trim() : undefined;
+  const cleanIncomingName =
+    params.incomingZoneName !== undefined ? String(params.incomingZoneName).trim() : undefined;
+
+  const baseAddr: ServiceAddress = params.existingAddress || {
+    id: `addr-${params.fallbackUserId}`,
+    userId: params.fallbackUserId,
+    title: params.isDealer ? 'Store Outlet' : 'Rider Residence',
+    userType: params.isDealer ? 'vendor' : 'delivery_rider',
+    division: '',
+    district: '',
+    upazila: '',
+    unionName: '',
+    area: '',
+    postalCode: '',
+    isMandatoryServiceAddress: true,
+    createdAt: params.nowIso,
+    updatedAt: params.nowIso
+  };
+
+  let nextAddr: ServiceAddress | undefined = params.incomingAddress
+    ? {
+        ...baseAddr,
+        ...params.incomingAddress,
+        userId: params.fallbackUserId,
+        isMandatoryServiceAddress: true,
+        updatedAt: params.nowIso
+      }
+    : params.existingAddress;
+
+  const addrLocationChanged = Boolean(
+    params.incomingAddress &&
+      ((params.incomingAddress.division !== undefined &&
+        params.incomingAddress.division.trim() !== (params.existingAddress?.division || '').trim()) ||
+        (params.incomingAddress.district !== undefined &&
+          params.incomingAddress.district.trim() !== (params.existingAddress?.district || '').trim()) ||
+        (params.incomingAddress.upazila !== undefined &&
+          params.incomingAddress.upazila.trim() !== (params.existingAddress?.upazila || '').trim()))
+  );
+
+  let resolvedZone: DeliveryZone | undefined;
+
+  if (cleanIncomingId && cleanIncomingId !== params.existingZoneId) {
+    resolvedZone = getZoneById(cleanIncomingId) || resolveZoneFromNameOrText(cleanIncomingId);
+    if (!resolvedZone) {
+      return { error: `নির্বাচিত জোন আইডি '${cleanIncomingId}' সঠিক নয়। অনুগ্রহ করে তালিকা থেকে সঠিক জোন নির্বাচন করুন।` };
+    }
+  } else if (
+    cleanIncomingName &&
+    cleanIncomingName !== params.existingZoneName &&
+    !addrLocationChanged
+  ) {
+    resolvedZone = resolveZoneFromNameOrText(cleanIncomingName);
+  } else if (cleanIncomingId && !addrLocationChanged) {
+    resolvedZone = getZoneById(cleanIncomingId) || resolveZoneFromNameOrText(cleanIncomingId);
+  } else if (addrLocationChanged && nextAddr) {
+    resolvedZone = getZoneByUpazila(nextAddr.upazila, nextAddr.district, nextAddr.division);
+  } else if (params.isDealer && (cleanIncomingId || cleanIncomingName)) {
+    resolvedZone =
+      (cleanIncomingId ? getZoneById(cleanIncomingId) : undefined) ||
+      (cleanIncomingName ? resolveZoneFromNameOrText(cleanIncomingName) : undefined);
+  }
+
+  let nextZoneId =
+    cleanIncomingId !== undefined ? cleanIncomingId : params.existingZoneId;
+  let nextZoneName =
+    cleanIncomingName !== undefined ? cleanIncomingName : params.existingZoneName;
+
+  if (resolvedZone) {
+    nextZoneId = resolvedZone.zone_id;
+    nextZoneName = `${resolvedZone.zone_name_bn} (${resolvedZone.zone_name})`;
+    const workingAddr = nextAddr || { ...baseAddr };
+    const prevFull = (params.existingAddress?.fullServiceAddress || '').trim();
+    const incFull = (params.incomingAddress?.fullServiceAddress || '').trim();
+    const shouldRefreshGeoFields = !addrLocationChanged || Boolean(cleanIncomingId && cleanIncomingId !== params.existingZoneId);
+
+    const syncedAddr: ServiceAddress = {
+      ...workingAddr,
+      division: shouldRefreshGeoFields
+        ? resolvedZone.division_name
+        : workingAddr.division || resolvedZone.division_name,
+      district: shouldRefreshGeoFields
+        ? resolvedZone.district_name
+        : workingAddr.district || resolvedZone.district_name,
+      upazila: shouldRefreshGeoFields
+        ? resolvedZone.upazila_name
+        : workingAddr.upazila || resolvedZone.upazila_name,
+      updatedAt: params.nowIso
+    };
+
+    if (!incFull || incFull === prevFull) {
+      const parts = [
+        syncedAddr.houseNo,
+        syncedAddr.roadNo,
+        syncedAddr.area,
+        syncedAddr.ward,
+        syncedAddr.unionName,
+        syncedAddr.upazila,
+        syncedAddr.district,
+        syncedAddr.division
+      ]
+        .map((p) => (p || '').trim())
+        .filter(Boolean);
+      if (parts.length > 0 && !incFull) {
+        syncedAddr.fullServiceAddress = syncedAddr.postalCode
+          ? `${parts.join(', ')} (${syncedAddr.postalCode})`
+          : parts.join(', ');
+      }
+    }
+    nextAddr = syncedAddr;
+  } else if (nextAddr && !nextAddr.fullServiceAddress?.trim()) {
+    const parts = [
+      nextAddr.houseNo,
+      nextAddr.roadNo,
+      nextAddr.area,
+      nextAddr.ward,
+      nextAddr.unionName,
+      nextAddr.upazila,
+      nextAddr.district,
+      nextAddr.division
+    ]
+      .map((p) => (p || '').trim())
+      .filter(Boolean);
+    if (parts.length > 0) {
+      nextAddr.fullServiceAddress = nextAddr.postalCode
+        ? `${parts.join(', ')} (${nextAddr.postalCode})`
+        : parts.join(', ');
+    }
+  }
+
+  return {
+    zoneId: nextZoneId,
+    zoneName: nextZoneName,
+    mandatoryAddress: nextAddr
+  };
+}
 
 interface StoredStaffAccountRecord extends ManagedStaffAccount {
   passwordHash: string;
@@ -421,6 +582,8 @@ export function createStaffAccountsAuthStore(
       tradeLicenseBusinessName?: string;
       tradeLicenseNumber?: string;
       dealerOwnerName?: string;
+      zoneId?: string;
+      zoneName?: string;
       // Optional Address fields
       division?: string;
       district?: string;
@@ -482,21 +645,54 @@ export function createStaffAccountsAuthStore(
         const permanentMemberId = `${prefix}${String(nextNum).padStart(6, '0')}`;
         const newId = `${isRider ? 'usr-rider' : 'usr-dealer'}-${Date.now()}`;
 
-        const addr: ServiceAddress = {
-          id: `addr-${newId}`,
-          userId: newId,
-          title: isRider ? 'ডেলিভারি সার্ভিস এরিয়া' : 'ডিলার আউটলেট',
-          userType: isRider ? 'delivery_rider' : 'vendor',
-          division: (params.division || 'ঢাকা').trim(),
-          district: (params.district || 'ঢাকা').trim(),
-          upazila: (params.upazila || 'মিরপুর').trim(),
-          unionName: (params.unionName || '').trim(),
-          area: (params.area || '').trim(),
-          postalCode: (params.postalCode || '1000').trim(),
-          isMandatoryServiceAddress: true,
-          createdAt: nowIso,
-          updatedAt: nowIso
-        };
+        const syncedZone = !isRider
+          ? syncDealerZoneAndAddress({
+              isDealer: true,
+              incomingZoneId: params.zoneId,
+              incomingZoneName: params.zoneName,
+              incomingAddress: {
+                division: (params.division || '').trim(),
+                district: (params.district || '').trim(),
+                upazila: (params.upazila || '').trim(),
+                unionName: (params.unionName || '').trim(),
+                area: (params.area || '').trim(),
+                postalCode: (params.postalCode || '1000').trim()
+              },
+              fallbackUserId: newId,
+              nowIso
+            })
+          : null;
+
+        if (syncedZone?.error) {
+          return { success: false, statusCode: 400, message: syncedZone.error };
+        }
+
+        const addr: ServiceAddress = syncedZone?.mandatoryAddress
+          ? {
+              ...syncedZone.mandatoryAddress,
+              id: `addr-${newId}`,
+              userId: newId,
+              title: isRider ? 'ডেলিভারি সার্ভিস এরিয়া' : 'ডিলার আউটলেট',
+              userType: isRider ? 'delivery_rider' : 'vendor',
+              division: syncedZone.mandatoryAddress.division || (params.division || 'ঢাকা').trim(),
+              district: syncedZone.mandatoryAddress.district || (params.district || 'ঢাকা').trim(),
+              upazila: syncedZone.mandatoryAddress.upazila || (params.upazila || 'মিরপুর').trim()
+            }
+          : {
+              id: `addr-${newId}`,
+              userId: newId,
+              title: isRider ? 'ডেলিভারি সার্ভিস এরিয়া' : 'ডিলার আউটলেট',
+              userType: isRider ? 'delivery_rider' : 'vendor',
+              division: (params.division || 'ঢাকা').trim(),
+              district: (params.district || 'ঢাকা').trim(),
+              upazila: (params.upazila || 'মিরপুর').trim(),
+              unionName: (params.unionName || '').trim(),
+              area: (params.area || '').trim(),
+              postalCode: (params.postalCode || '1000').trim(),
+              isMandatoryServiceAddress: true,
+              createdAt: nowIso,
+              updatedAt: nowIso
+            };
 
         const newRecord: StoredStaffAccountRecord = {
           id: newId,
@@ -523,6 +719,8 @@ export function createStaffAccountsAuthStore(
           tradeLicenseBusinessName: !isRider ? (params.tradeLicenseBusinessName || params.shopName || '').trim() : undefined,
           tradeLicenseNumber: !isRider ? (params.tradeLicenseNumber || '').trim() : undefined,
           dealerOwnerName: !isRider ? (params.dealerOwnerName || fullName).trim() : undefined,
+          zoneId: !isRider ? syncedZone?.zoneId : undefined,
+          zoneName: !isRider ? syncedZone?.zoneName : undefined,
           mandatoryAddress: addr
         };
 
@@ -558,6 +756,10 @@ export function createStaffAccountsAuthStore(
       email?: string;
       fullName?: string;
       mobileNumber?: string;
+      profilePhotoUrl?: string;
+      nationalId?: string;
+      dateOfBirth?: string;
+      gender?: Gender;
       mustChangePassword?: boolean;
       vehicleType?: string;
       vehicleRegNumber?: string;
@@ -567,6 +769,8 @@ export function createStaffAccountsAuthStore(
       tradeLicenseBusinessName?: string;
       tradeLicenseNumber?: string;
       dealerOwnerName?: string;
+      zoneId?: string;
+      zoneName?: string;
       address?: Partial<ServiceAddress>;
       actorId: string;
       actorName: string;
@@ -619,6 +823,21 @@ export function createStaffAccountsAuthStore(
         }
 
         const nowIso = new Date().toISOString();
+        const syncedZone = syncDealerZoneAndAddress({
+          isDealer: target.roleGroup === 'dealer',
+          existingZoneId: target.zoneId,
+          existingZoneName: target.zoneName,
+          existingAddress: target.mandatoryAddress,
+          incomingZoneId: params.zoneId,
+          incomingZoneName: params.zoneName,
+          incomingAddress: params.address,
+          fallbackUserId: target.id,
+          nowIso
+        });
+        if (syncedZone.error) {
+          return { success: false, statusCode: 400, message: syncedZone.error };
+        }
+
         const updated: StoredStaffAccountRecord = {
           ...target,
           // Internal IDs (id, permanentMemberId, aponUniqueId, createdAt) NEVER change
@@ -629,6 +848,15 @@ export function createStaffAccountsAuthStore(
             params.mobileNumber !== undefined
               ? String(params.mobileNumber).trim() || target.mobileNumber
               : target.mobileNumber,
+          profilePhotoUrl:
+            params.profilePhotoUrl !== undefined
+              ? String(params.profilePhotoUrl).trim()
+              : target.profilePhotoUrl,
+          nationalId:
+            params.nationalId !== undefined ? String(params.nationalId).trim() : target.nationalId,
+          dateOfBirth:
+            params.dateOfBirth !== undefined ? String(params.dateOfBirth).trim() : target.dateOfBirth,
+          gender: params.gender !== undefined ? params.gender : target.gender,
           mustChangePassword:
             params.mustChangePassword !== undefined
               ? Boolean(params.mustChangePassword)
@@ -658,13 +886,9 @@ export function createStaffAccountsAuthStore(
             params.dealerOwnerName !== undefined
               ? String(params.dealerOwnerName).trim()
               : target.dealerOwnerName,
-          mandatoryAddress: params.address && target.mandatoryAddress
-            ? {
-                ...target.mandatoryAddress,
-                ...params.address,
-                updatedAt: nowIso
-              }
-            : target.mandatoryAddress,
+          zoneId: syncedZone.zoneId,
+          zoneName: syncedZone.zoneName,
+          mandatoryAddress: syncedZone.mandatoryAddress || target.mandatoryAddress,
           updatedAt: nowIso
         };
 
@@ -675,6 +899,8 @@ export function createStaffAccountsAuthStore(
         if (target.mobileNumber !== updated.mobileNumber) changedFields.push('mobileNumber');
         if (target.mustChangePassword !== updated.mustChangePassword) changedFields.push('mustChangePassword');
         if (target.shopName !== updated.shopName) changedFields.push('shopName');
+        if (target.zoneId !== updated.zoneId) changedFields.push('zoneId');
+        if (target.zoneName !== updated.zoneName) changedFields.push('zoneName');
         if (target.vehicleType !== updated.vehicleType) changedFields.push('vehicleType');
         if (target.vehicleRegNumber !== updated.vehicleRegNumber) changedFields.push('vehicleRegNumber');
 
@@ -1050,6 +1276,202 @@ export function createStaffAccountsAuthStore(
           success: true,
           statusCode: 200,
           message: 'পাসওয়ার্ড সফলভাবে পরিবর্তন করা হয়েছে!',
+          account: sanitizeStaffAccount(updated)
+        };
+      });
+    },
+
+    findStaffById: async (idOrUsername: string): Promise<ManagedStaffAccount | null> => {
+      return runWithLock(() => {
+        const clean = (idOrUsername || '').trim().toLowerCase();
+        if (!clean) return null;
+        const payload = loadStore();
+        const match = payload.accounts.find(
+          (a) =>
+            a.id.toLowerCase() === clean ||
+            a.permanentMemberId.toLowerCase() === clean ||
+            a.aponUniqueId.toLowerCase() === clean ||
+            a.username.toLowerCase() === clean
+        );
+        return match ? sanitizeStaffAccount(match) : null;
+      });
+    },
+
+    listAllStaffSanitized: async (): Promise<ManagedStaffAccount[]> => {
+      return runWithLock(() => {
+        const payload = loadStore();
+        return payload.accounts.map(sanitizeStaffAccount);
+      });
+    },
+
+    updateOwnProfile: async (params: {
+      accountId: string;
+      updates: {
+        fullName?: string;
+        email?: string;
+        mobileNumber?: string;
+        profilePhotoUrl?: string;
+        nationalId?: string;
+        dateOfBirth?: string;
+        gender?: Gender;
+        vehicleType?: string;
+        vehicleRegNumber?: string;
+        drivingLicenseNumber?: string;
+        shopName?: string;
+        businessType?: string;
+        tradeLicenseBusinessName?: string;
+        tradeLicenseNumber?: string;
+        dealerOwnerName?: string;
+        zoneId?: string;
+        zoneName?: string;
+        mandatoryAddress?: Partial<ServiceAddress>;
+      };
+    }): Promise<{
+      success: boolean;
+      statusCode: number;
+      message: string;
+      account?: ManagedStaffAccount;
+    }> => {
+      return runWithLock(async () => {
+        const clean = (params.accountId || '').trim().toLowerCase();
+        const payload = loadStore();
+        const idx = payload.accounts.findIndex(
+          (a) =>
+            a.id.toLowerCase() === clean ||
+            a.permanentMemberId.toLowerCase() === clean ||
+            a.username.toLowerCase() === clean
+        );
+        if (idx === -1) {
+          return {
+            success: false,
+            statusCode: 404,
+            message: 'অ্যাকাউন্ট ডাটাবেসে খুঁজে পাওয়া যায়নি।'
+          };
+        }
+
+        const target = payload.accounts[idx];
+        const up = params.updates || {};
+
+        const nextFullName =
+          up.fullName !== undefined ? String(up.fullName).trim() : target.fullName;
+        if (!nextFullName) {
+          return {
+            success: false,
+            statusCode: 400,
+            message: 'পূর্ণ নাম (Full Name) খালি রাখা যাবে না।'
+          };
+        }
+
+        const nextEmail =
+          up.email !== undefined ? String(up.email).trim().toLowerCase() : target.email;
+        if (!nextEmail || !isValidEmailAddress(nextEmail)) {
+          return {
+            success: false,
+            statusCode: 400,
+            message: 'সঠিক ও বৈধ ইমেইল ঠিকানা প্রদান করুন।'
+          };
+        }
+
+        let nextMobile = target.mobileNumber;
+        if (up.mobileNumber !== undefined) {
+          const norm = normalizePhone(String(up.mobileNumber));
+          if (!norm || norm.length < 11) {
+            return {
+              success: false,
+              statusCode: 400,
+              message: 'সঠিক ১১ ডিজিটের বাংলাদেশ মোবাইল নম্বর প্রদান করুন।'
+            };
+          }
+          nextMobile = norm;
+        }
+
+        const uniq = await checkUniqueCredentials(payload, {
+          username: target.username,
+          email: nextEmail,
+          excludeId: target.id
+        });
+        if (!uniq.ok) {
+          return {
+            success: false,
+            statusCode: 409,
+            message: uniq.message || `ইমেইল '${nextEmail}' ইতিমধ্যেই ব্যবহৃত হচ্ছে।`
+          };
+        }
+
+        const nowIso = new Date().toISOString();
+        const syncedZone = syncDealerZoneAndAddress({
+          isDealer: target.roleGroup === 'dealer',
+          existingZoneId: target.zoneId,
+          existingZoneName: target.zoneName,
+          existingAddress: target.mandatoryAddress,
+          incomingZoneId: up.zoneId,
+          incomingZoneName: up.zoneName,
+          incomingAddress: up.mandatoryAddress,
+          fallbackUserId: target.id,
+          nowIso
+        });
+        if (syncedZone.error) {
+          return {
+            success: false,
+            statusCode: 400,
+            message: syncedZone.error
+          };
+        }
+
+        const updated: StoredStaffAccountRecord = {
+          ...target,
+          fullName: nextFullName,
+          email: nextEmail,
+          mobileNumber: nextMobile,
+          profilePhotoUrl:
+            up.profilePhotoUrl !== undefined
+              ? String(up.profilePhotoUrl).trim()
+              : target.profilePhotoUrl,
+          nationalId:
+            up.nationalId !== undefined ? String(up.nationalId).trim() : target.nationalId,
+          dateOfBirth:
+            up.dateOfBirth !== undefined ? String(up.dateOfBirth).trim() : target.dateOfBirth,
+          gender: up.gender !== undefined ? up.gender : target.gender,
+          vehicleType:
+            up.vehicleType !== undefined ? String(up.vehicleType).trim() : target.vehicleType,
+          vehicleRegNumber:
+            up.vehicleRegNumber !== undefined
+              ? String(up.vehicleRegNumber).trim()
+              : target.vehicleRegNumber,
+          drivingLicenseNumber:
+            up.drivingLicenseNumber !== undefined
+              ? String(up.drivingLicenseNumber).trim()
+              : target.drivingLicenseNumber,
+          shopName:
+            up.shopName !== undefined ? String(up.shopName).trim() : target.shopName,
+          businessType:
+            up.businessType !== undefined ? String(up.businessType).trim() : target.businessType,
+          tradeLicenseBusinessName:
+            up.tradeLicenseBusinessName !== undefined
+              ? String(up.tradeLicenseBusinessName).trim()
+              : target.tradeLicenseBusinessName,
+          tradeLicenseNumber:
+            up.tradeLicenseNumber !== undefined
+              ? String(up.tradeLicenseNumber).trim()
+              : target.tradeLicenseNumber,
+          dealerOwnerName:
+            up.dealerOwnerName !== undefined
+              ? String(up.dealerOwnerName).trim()
+              : target.dealerOwnerName,
+          zoneId: syncedZone.zoneId,
+          zoneName: syncedZone.zoneName,
+          mandatoryAddress: syncedZone.mandatoryAddress || target.mandatoryAddress,
+          updatedAt: nowIso
+        };
+
+        payload.accounts[idx] = updated;
+        writeAtomicSync(payload);
+        cached = payload;
+
+        return {
+          success: true,
+          statusCode: 200,
+          message: `প্রোফাইল '${updated.fullName}' সফলভাবে ডাটাবেসে সংরক্ষিত হয়েছে!`,
           account: sanitizeStaffAccount(updated)
         };
       });

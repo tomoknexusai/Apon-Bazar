@@ -20,6 +20,7 @@ import {
 } from '../types';
 import { UniqueIdService } from '../services/UniqueIdService';
 import { initialSeedUsers, initialSystemSettings, initialAuditLogs, supabase, isSupabaseConfigured } from '../lib/supabase';
+import { getZoneByUpazila } from '../services/DeliveryZoneService';
 import {
   isRoleAuthorized,
   getAllowedDashboardRoles,
@@ -170,10 +171,12 @@ interface AuthContextType {
   linkBinaryCompanyId: (userId: string, binaryCompanyId: string) => void;
   setUserTokenBalance: (userId: string, balance: number) => void;
   logout: () => Promise<{ success: boolean; message: string }>;
-  updateProfile: (data: Partial<UserProfile>) => void;
-  updateServiceAddress: (address: Partial<ServiceAddress>) => void;
-  updateMandatoryAddress: (address: Partial<ServiceAddress>) => void;
-  submitKyc: (nid: string, dob: string, frontUrl?: string, backUrl?: string) => void;
+  refreshCurrentUserProfile: (userIdOverride?: string) => Promise<UserProfile | null>;
+  refreshAllUsersForSuperAdmin: () => Promise<UserProfile[] | null>;
+  updateProfile: (data: Partial<UserProfile>) => Promise<{ success: boolean; message: string; user?: UserProfile }>;
+  updateServiceAddress: (address: Partial<ServiceAddress>) => Promise<{ success: boolean; message: string; user?: UserProfile }>;
+  updateMandatoryAddress: (address: Partial<ServiceAddress>) => Promise<{ success: boolean; message: string; user?: UserProfile }>;
+  submitKyc: (nid: string, dob: string, frontUrl?: string, backUrl?: string) => Promise<{ success: boolean; message: string; user?: UserProfile }>;
   approveKyc: (userId: string) => void;
   rejectKyc: (userId: string, reason: string) => void;
   updateSystemSettings: (settings: Partial<SystemSettings>) => Promise<{ success: boolean; message: string; settings?: SystemSettings }>;
@@ -184,7 +187,7 @@ interface AuthContextType {
     userId: string,
     updatedData: Partial<UserProfile>,
     addressData?: Partial<ServiceAddress>
-  ) => { success: boolean; message: string };
+  ) => Promise<{ success: boolean; message: string; user?: UserProfile }>;
   updateUserStatusByAdmin: (
     userId: string,
     newStatus: AccountStatus,
@@ -447,6 +450,135 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return isLoggedIn ? (users.find((u) => u.id === currentUserId) || users[0]) : guestUser;
   }, [isLoggedIn, users, currentUserId]);
 
+  const usersRef = React.useRef(users);
+  usersRef.current = users;
+  const currentUserRef = React.useRef(currentUser);
+  currentUserRef.current = currentUser;
+  const activeRoleRef = React.useRef(activeRole);
+  activeRoleRef.current = activeRole;
+  const currentUserIdRef = React.useRef(currentUserId);
+  currentUserIdRef.current = currentUserId;
+  const isLoggedInRef = React.useRef(isLoggedIn);
+  isLoggedInRef.current = isLoggedIn;
+
+  const profileRefreshInFlightRef = React.useRef<Map<string, Promise<UserProfile | null>>>(new Map());
+  const allUsersRefreshInFlightRef = React.useRef<Promise<UserProfile[] | null> | null>(null);
+
+  const mergeServerUserIntoList = React.useCallback((confirmedUser: UserProfile) => {
+    setUsers((prev) => {
+      const targetIdLower = (confirmedUser.id || '').trim().toLowerCase();
+      const targetPermLower = (confirmedUser.permanentMemberId || '').trim().toLowerCase();
+      const idx = prev.findIndex(
+        (u) =>
+          u.id.trim().toLowerCase() === targetIdLower ||
+          (targetPermLower && (u.permanentMemberId || '').trim().toLowerCase() === targetPermLower)
+      );
+      if (idx === -1) {
+        return [confirmedUser, ...prev];
+      }
+      const existing = prev[idx];
+      const merged: UserProfile = {
+        ...existing,
+        ...confirmedUser,
+        // Preserve local seed password hash for demo auth compatibility when server response omits hashes
+        password: existing.password
+      };
+      const next = [...prev];
+      next[idx] = merged;
+      return next;
+    });
+  }, []);
+
+  const refreshCurrentUserProfile = React.useCallback(async (userIdOverride?: string): Promise<UserProfile | null> => {
+    const targetId = (userIdOverride || currentUserIdRef.current || '').trim();
+    if (!targetId || targetId === 'guest') return null;
+    const existingFlight = profileRefreshInFlightRef.current.get(targetId);
+    if (existingFlight) return existingFlight;
+
+    const reqPromise = (async () => {
+      try {
+        const targetLocal = usersRef.current.find((u) => u.id === targetId);
+        const roleHeader = targetLocal?.primaryRole || activeRoleRef.current || '';
+        const res = await fetch(`/api/profile/${encodeURIComponent(targetId)}`, {
+          headers: {
+            'x-user-id': targetId,
+            'x-user-role': roleHeader
+          }
+        });
+        if (!res.ok) return null;
+        const data = await res.json();
+        if (data?.success && data?.user) {
+          mergeServerUserIntoList(data.user as UserProfile);
+          return data.user as UserProfile;
+        }
+      } catch {
+        // Non-fatal if server offline
+      } finally {
+        profileRefreshInFlightRef.current.delete(targetId);
+      }
+      return null;
+    })();
+
+    profileRefreshInFlightRef.current.set(targetId, reqPromise);
+    return reqPromise;
+  }, [mergeServerUserIntoList]);
+
+  const refreshAllUsersForSuperAdmin = React.useCallback(async (): Promise<UserProfile[] | null> => {
+    const cu = currentUserRef.current;
+    if (!isLoggedInRef.current || !canAccessActiveUserList(cu)) return null;
+    if (allUsersRefreshInFlightRef.current) return allUsersRefreshInFlightRef.current;
+
+    const reqPromise = (async () => {
+      try {
+        const res = await fetch('/api/admin/active-users', {
+          headers: {
+            'x-user-id': cu.id,
+            'x-user-role': cu.primaryRole || activeRoleRef.current || 'super_admin'
+          }
+        });
+        if (!res.ok) return null;
+        const payload = await res.json();
+        if (payload?.success && Array.isArray(payload.data)) {
+          const serverUsers = payload.data as UserProfile[];
+          setUsers((prev) => {
+            const prevById = new Map(prev.map((u) => [u.id.toLowerCase(), u]));
+            const next = [...prev];
+            for (const su of serverUsers) {
+              const idx = next.findIndex((u) => u.id.toLowerCase() === su.id.toLowerCase());
+              const existing = prevById.get(su.id.toLowerCase());
+              const merged: UserProfile = {
+                ...(existing || ({} as UserProfile)),
+                ...su,
+                password: existing?.password
+              };
+              if (idx === -1) {
+                next.push(merged);
+              } else {
+                next[idx] = merged;
+              }
+            }
+            return next;
+          });
+          return serverUsers;
+        }
+      } catch {
+        // Non-fatal if offline
+      } finally {
+        allUsersRefreshInFlightRef.current = null;
+      }
+      return null;
+    })();
+
+    allUsersRefreshInFlightRef.current = reqPromise;
+    return reqPromise;
+  }, []);
+
+  React.useEffect(() => {
+    if (isLoggedIn && currentUserId && currentUserId !== 'guest') {
+      void refreshCurrentUserProfile(currentUserId);
+    }
+  }, [isLoggedIn, currentUserId, refreshCurrentUserProfile]);
+
   const allowedRoles = React.useMemo(() => {
     return getAllowedDashboardRoles(currentUser);
   }, [currentUser]);
@@ -543,6 +675,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             srvAcc.primaryRole === 'delivery_rider' ||
             srvAcc.primaryRole === 'dealer';
           const resolvedCompanyId = !isStaffAccount ? (srvAcc.companyId || srvAcc.customerId) : undefined;
+          const resolvedBinaryCompanyId =
+            srvAcc.binaryCompanyId ||
+            (/^AB-/i.test(resolvedCompanyId || '') ? resolvedCompanyId : undefined);
           const resolvedPermanentId =
             srvAcc.permanentMemberId || resolvedCompanyId || srvAcc.username;
           const resolvedTokenBal =
@@ -576,12 +711,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               email: srvAcc.email || matchedServerUser.email,
               fullName: srvAcc.fullName || matchedServerUser.fullName,
               mobileNumber: srvAcc.mobileNumber || matchedServerUser.mobileNumber,
+              profilePhotoUrl: srvAcc.profilePhotoUrl ?? matchedServerUser.profilePhotoUrl,
+              nationalId: srvAcc.nationalId ?? srvAcc.nidNumber ?? matchedServerUser.nationalId,
+              dateOfBirth: srvAcc.dateOfBirth ?? matchedServerUser.dateOfBirth,
+              gender: srvAcc.gender ?? matchedServerUser.gender,
+              latitude:
+                srvAcc.latitude ?? srvAcc.mandatoryAddress?.latitude ?? matchedServerUser.latitude,
+              longitude:
+                srvAcc.longitude ?? srvAcc.mandatoryAddress?.longitude ?? matchedServerUser.longitude,
               accountStatus: srvAcc.accountStatus || matchedServerUser.accountStatus,
               mustChangePassword: mustChange,
               lastPasswordResetAt: srvAcc.lastPasswordResetAt || matchedServerUser.lastPasswordResetAt,
               customerId: resolvedCompanyId || matchedServerUser.customerId,
               permanentMemberId: resolvedPermanentId || matchedServerUser.permanentMemberId,
-              binaryCompanyId: isStaffAccount ? matchedServerUser.binaryCompanyId : resolvedCompanyId,
+              binaryCompanyId: isStaffAccount
+                ? matchedServerUser.binaryCompanyId
+                : (resolvedBinaryCompanyId ?? matchedServerUser.binaryCompanyId),
               sponsorId: srvAcc.sponsorId || matchedServerUser.sponsorId,
               referralId: srvAcc.sponsorId || matchedServerUser.referralId,
               placementId: srvAcc.placementParentId || matchedServerUser.placementId,
@@ -604,6 +749,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 srvAcc.tradeLicenseBusinessName ?? matchedServerUser.tradeLicenseBusinessName,
               tradeLicenseNumber: srvAcc.tradeLicenseNumber ?? matchedServerUser.tradeLicenseNumber,
               dealerOwnerName: srvAcc.dealerOwnerName ?? matchedServerUser.dealerOwnerName,
+              zoneId: srvAcc.zoneId ?? matchedServerUser.zoneId,
+              zoneName: srvAcc.zoneName ?? matchedServerUser.zoneName,
               mandatoryAddress: srvAcc.mandatoryAddress ?? matchedServerUser.mandatoryAddress,
               lastLogin: srvAcc.lastLogin || nowIso,
               updatedAt: nowIso
@@ -621,6 +768,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   email: srvAcc.email || fallbackSeed.email,
                   fullName: srvAcc.fullName || fallbackSeed.fullName,
                   mobileNumber: srvAcc.mobileNumber || fallbackSeed.mobileNumber,
+                  profilePhotoUrl: srvAcc.profilePhotoUrl ?? fallbackSeed.profilePhotoUrl,
+                  nationalId: srvAcc.nationalId ?? srvAcc.nidNumber ?? fallbackSeed.nationalId,
+                  dateOfBirth: srvAcc.dateOfBirth ?? fallbackSeed.dateOfBirth,
+                  gender: srvAcc.gender ?? fallbackSeed.gender,
+                  latitude:
+                    srvAcc.latitude ?? srvAcc.mandatoryAddress?.latitude ?? fallbackSeed.latitude,
+                  longitude:
+                    srvAcc.longitude ?? srvAcc.mandatoryAddress?.longitude ?? fallbackSeed.longitude,
+                  mandatoryAddress: srvAcc.mandatoryAddress ?? fallbackSeed.mandatoryAddress,
+                  shopName: srvAcc.shopName ?? fallbackSeed.shopName,
+                  businessType: srvAcc.businessType ?? fallbackSeed.businessType,
+                  tradeLicenseBusinessName:
+                    srvAcc.tradeLicenseBusinessName ?? fallbackSeed.tradeLicenseBusinessName,
+                  tradeLicenseNumber: srvAcc.tradeLicenseNumber ?? fallbackSeed.tradeLicenseNumber,
+                  dealerOwnerName: srvAcc.dealerOwnerName ?? fallbackSeed.dealerOwnerName,
+                  zoneId: srvAcc.zoneId ?? fallbackSeed.zoneId,
+                  zoneName: srvAcc.zoneName ?? fallbackSeed.zoneName,
+                  vehicleType: srvAcc.vehicleType ?? fallbackSeed.vehicleType,
+                  vehicleRegNumber: srvAcc.vehicleRegNumber ?? fallbackSeed.vehicleRegNumber,
+                  drivingLicenseNumber: srvAcc.drivingLicenseNumber ?? fallbackSeed.drivingLicenseNumber,
                   accountStatus: srvAcc.accountStatus || fallbackSeed.accountStatus,
                   mustChangePassword: mustChange,
                   lastLogin: srvAcc.lastLogin || nowIso
@@ -631,10 +798,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   email: srvAcc.email,
                   fullName: srvAcc.fullName,
                   mobileNumber: srvAcc.mobileNumber,
+                  profilePhotoUrl: srvAcc.profilePhotoUrl,
+                  nationalId: srvAcc.nationalId || srvAcc.nidNumber,
+                  dateOfBirth: srvAcc.dateOfBirth,
+                  gender: srvAcc.gender,
+                  latitude: srvAcc.latitude ?? srvAcc.mandatoryAddress?.latitude,
+                  longitude: srvAcc.longitude ?? srvAcc.mandatoryAddress?.longitude,
                   aponUniqueId: srvAcc.aponUniqueId || resolvedPermanentId,
                   permanentMemberId: resolvedPermanentId,
                   customerId: resolvedCompanyId,
-                  binaryCompanyId: resolvedCompanyId,
+                  binaryCompanyId: resolvedBinaryCompanyId,
                   sponsorId: srvAcc.sponsorId,
                   referralId: srvAcc.sponsorId,
                   placementId: srvAcc.placementParentId,
@@ -657,6 +830,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   tradeLicenseBusinessName: srvAcc.tradeLicenseBusinessName,
                   tradeLicenseNumber: srvAcc.tradeLicenseNumber,
                   dealerOwnerName: srvAcc.dealerOwnerName,
+                  zoneId: srvAcc.zoneId,
+                  zoneName: srvAcc.zoneName,
                   mandatoryAddress: srvAcc.mandatoryAddress,
                   lastLogin: srvAcc.lastLogin || nowIso,
                   createdAt: srvAcc.registeredAt || srvAcc.createdAt || nowIso,
@@ -772,6 +947,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.error('Failed to persist auth session to localStorage', e);
     }
 
+    // Re-hydrate persisted server DB profile edits immediately on login
+    await refreshCurrentUserProfile(matchedUser.id);
+
     if (!matchedUser.mustChangePassword && typeof window !== 'undefined') {
       const targetPath = getDashboardPathForRole(targetRole);
       window.history.pushState({}, '', targetPath);
@@ -798,32 +976,94 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const loginWithPhoneOtp = async (phone: string, otp: string): Promise<boolean> => {
-    if (otp === '1234' || otp.length === 4) {
-      const normPhone = normalizeBDMobileNumber(phone);
-      const match = users.find((u) => normalizeBDMobileNumber(u.mobileNumber) === normPhone);
-      if (match) {
-        setCurrentUserId(match.id);
-        setIsLoggedIn(true);
-        const targetRole = resolveUserHighestRole(match.roles, match.primaryRole, match.id);
-        setActiveRoleState(targetRole);
-        try {
-          localStorage.setItem(STORAGE_CURRENT_USER_ID_KEY, match.id);
-          localStorage.setItem(STORAGE_IS_LOGGED_IN_KEY, 'true');
-          localStorage.setItem(STORAGE_ACTIVE_ROLE_KEY, targetRole);
-        } catch (e) {}
-        if (typeof window !== 'undefined') {
-          const targetPath = getDashboardPathForRole(targetRole);
-          window.history.pushState({}, '', targetPath);
-          window.dispatchEvent(new Event('popstate'));
-        }
-        addAuditLog('LOGIN_PHONE_OTP', 'Auth', `Logged in via Mobile OTP (${phone}) as ${match.fullName}`);
-      } else {
-        setIsLoggedIn(true);
-        setActiveRoleState('customer');
-        addAuditLog('LOGIN_PHONE_OTP', 'Auth', `Logged in via Mobile OTP (${phone})`);
+    const cleanOtp = otp.trim();
+    if (cleanOtp !== '1234' && cleanOtp.length !== 4) {
+      return false;
+    }
+
+    const normPhone = normalizeBDMobileNumber(phone);
+    if (!normPhone || normPhone.length < 10) {
+      return false;
+    }
+
+    // 1. Verify against durable server stores first so updated mobile numbers & fresh profiles resolve reliably
+    try {
+      const otpRes = await fetch('/api/auth/phone-otp-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: normPhone, otp: cleanOtp })
+      });
+      if (otpRes.status === 401 || otpRes.status === 403) {
+        return false;
       }
+      if (otpRes.ok) {
+        const otpData = await otpRes.json();
+        if (otpData?.authenticated && otpData?.account) {
+          const srvAcc = otpData.account as UserProfile;
+          const nowIso = new Date().toISOString();
+          const confirmedUser: UserProfile = {
+            ...srvAcc,
+            lastLogin: nowIso,
+            updatedAt: srvAcc.updatedAt || nowIso
+          };
+          mergeServerUserIntoList(confirmedUser);
+          setCurrentUserId(confirmedUser.id);
+          setIsLoggedIn(true);
+          const targetRole = resolveUserHighestRole(
+            confirmedUser.roles,
+            confirmedUser.primaryRole,
+            confirmedUser.id
+          );
+          setActiveRoleState(targetRole);
+          try {
+            localStorage.setItem(STORAGE_CURRENT_USER_ID_KEY, confirmedUser.id);
+            localStorage.setItem(STORAGE_IS_LOGGED_IN_KEY, 'true');
+            localStorage.setItem(STORAGE_ACTIVE_ROLE_KEY, targetRole);
+          } catch (e) {
+            console.error('Failed to persist OTP auth session', e);
+          }
+          if (typeof window !== 'undefined') {
+            const targetPath = getDashboardPathForRole(targetRole);
+            window.history.pushState({}, '', targetPath);
+            window.dispatchEvent(new Event('popstate'));
+          }
+          addAuditLog(
+            'LOGIN_PHONE_OTP',
+            'Auth',
+            `Server-verified Mobile OTP login (${normPhone}) as ${confirmedUser.fullName}`
+          );
+          return true;
+        }
+      }
+    } catch {
+      // Fall back to local state lookup if API offline
+    }
+
+    // 2. Local fallback for ad-hoc client-registered accounts
+    const match = users.find((u) => normalizeBDMobileNumber(u.mobileNumber) === normPhone);
+    if (match) {
+      if (match.accountStatus && match.accountStatus !== 'active') {
+        return false;
+      }
+      setCurrentUserId(match.id);
+      setIsLoggedIn(true);
+      const targetRole = resolveUserHighestRole(match.roles, match.primaryRole, match.id);
+      setActiveRoleState(targetRole);
+      try {
+        localStorage.setItem(STORAGE_CURRENT_USER_ID_KEY, match.id);
+        localStorage.setItem(STORAGE_IS_LOGGED_IN_KEY, 'true');
+        localStorage.setItem(STORAGE_ACTIVE_ROLE_KEY, targetRole);
+      } catch (e) {}
+      await refreshCurrentUserProfile(match.id);
+      if (typeof window !== 'undefined') {
+        const targetPath = getDashboardPathForRole(targetRole);
+        window.history.pushState({}, '', targetPath);
+        window.dispatchEvent(new Event('popstate'));
+      }
+      addAuditLog('LOGIN_PHONE_OTP', 'Auth', `Logged in via Mobile OTP (${phone}) as ${match.fullName}`);
       return true;
     }
+
     return false;
   };
 
@@ -1378,65 +1618,158 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   };
 
-  const updateProfile = (data: Partial<UserProfile>) => {
-    if (!currentUser) return;
-    setUsers((prev) =>
-      prev.map((u) =>
-        u.id === currentUser.id
-          ? {
-              ...u,
-              ...data,
-              updatedAt: new Date().toISOString()
-            }
-          : u
-      )
-    );
-    addAuditLog('UPDATE_PROFILE', 'UserProfile', `Updated personal profile details`);
+  const updateProfile = async (
+    data: Partial<UserProfile>
+  ): Promise<{ success: boolean; message: string; user?: UserProfile }> => {
+    if (!currentUser || !isLoggedIn || currentUser.id === 'guest') {
+      return { success: false, message: 'প্রোফাইল আপডেট করার জন্য অনুগ্রহ করে লগইন করুন।' };
+    }
+    try {
+      const res = await fetch('/api/profile', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-id': currentUser.id,
+          'x-user-role': currentUser.primaryRole || activeRole || '',
+          'x-user-name': encodeURIComponent(currentUser.fullName || '')
+        },
+        body: JSON.stringify({
+          ...data,
+          targetUserId: currentUser.id
+        })
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok || !payload?.success || !payload?.user) {
+        return {
+          success: false,
+          message: payload?.message || `সার্ভার ত্রুটি (${res.status}): প্রোফাইল সংরক্ষণ করা যায়নি।`
+        };
+      }
+      const savedUser = payload.user as UserProfile;
+      mergeServerUserIntoList(savedUser);
+      if (savedUser.id && savedUser.id !== currentUser.id) {
+        setCurrentUserId(savedUser.id);
+        try {
+          localStorage.setItem(STORAGE_CURRENT_USER_ID_KEY, savedUser.id);
+        } catch {}
+      }
+      addAuditLog('UPDATE_PROFILE', 'UserProfile', `Updated personal profile details in database`);
+      return {
+        success: true,
+        message: payload.message || 'প্রোফাইল তথ্য সফলভাবে ডাটাবেসে সংরক্ষিত হয়েছে!',
+        user: savedUser
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        message: err?.message || 'নেটওয়ার্ক ত্রুটির কারণে প্রোফাইল সংরক্ষণ ব্যর্থ হয়েছে।'
+      };
+    }
   };
 
-  const updateServiceAddress = (addressData: Partial<ServiceAddress>) => {
-    if (!currentUser) return;
-    setUsers((prev) =>
-      prev.map((u) => {
-        if (u.id === currentUser.id) {
-          const currentAddr = u.mandatoryAddress || {
-            id: `addr-${Date.now()}`,
-            userId: u.id,
-            title: 'Service Address',
-            division: 'ঢাকা',
-            district: 'ঢাকা',
-            upazila: 'ধানমন্ডি',
-            unionName: 'ধানমন্ডি আ/এ',
-            area: '',
-            postalCode: '1209',
-            isMandatoryServiceAddress: true,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-          };
+  const updateServiceAddress = async (
+    addressData: Partial<ServiceAddress>
+  ): Promise<{ success: boolean; message: string; user?: UserProfile }> => {
+    if (!currentUser || !isLoggedIn || currentUser.id === 'guest') {
+      return { success: false, message: 'ঠিকানা আপডেট করার জন্য অনুগ্রহ করে লগইন করুন।' };
+    }
+    const currentAddr = currentUser.mandatoryAddress || {
+      id: `addr-${currentUser.id}`,
+      userId: currentUser.id,
+      title: 'Service Address',
+      division: 'ঢাকা',
+      district: 'ঢাকা',
+      upazila: 'ধানমন্ডি',
+      unionName: 'ধানমন্ডি আ/এ',
+      area: '',
+      postalCode: '1209',
+      isMandatoryServiceAddress: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
 
-          return {
-            ...u,
-            mandatoryAddress: {
-              ...currentAddr,
-              ...addressData,
-              updatedAt: new Date().toISOString()
-            },
-            updatedAt: new Date().toISOString()
-          };
-        }
-        return u;
-      })
-    );
-    addAuditLog('UPDATE_ADDRESS', 'ServiceAddress', `Updated mandatory Bangladesh service address`);
+    const mergedAddr: ServiceAddress = {
+      ...currentAddr,
+      ...addressData,
+      userId: currentUser.id,
+      isMandatoryServiceAddress: true,
+      updatedAt: new Date().toISOString()
+    };
+
+    try {
+      const isDealerRole =
+        currentUser.primaryRole === 'dealer' ||
+        currentUser.primaryRole === 'vendor' ||
+        currentUser.primaryRole === 'vendor_dealer_shop' ||
+        currentUser.roles?.includes('dealer') ||
+        currentUser.roles?.includes('vendor');
+      const derivedDealerZone =
+        isDealerRole && (mergedAddr.upazila || mergedAddr.district)
+          ? getZoneByUpazila(mergedAddr.upazila, mergedAddr.district, mergedAddr.division)
+          : null;
+
+      const res = await fetch('/api/profile', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-id': currentUser.id,
+          'x-user-role': currentUser.primaryRole || activeRole || '',
+          'x-user-name': encodeURIComponent(currentUser.fullName || '')
+        },
+        body: JSON.stringify({
+          targetUserId: currentUser.id,
+          mandatoryAddress: mergedAddr,
+          ...(derivedDealerZone
+            ? {
+                zoneId: derivedDealerZone.zone_id,
+                zoneName: `${derivedDealerZone.zone_name_bn} (${derivedDealerZone.zone_name})`
+              }
+            : {}),
+          latitude: mergedAddr.latitude ?? currentUser.latitude,
+          longitude: mergedAddr.longitude ?? currentUser.longitude
+        })
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok || !payload?.success || !payload?.user) {
+        return {
+          success: false,
+          message: payload?.message || `সার্ভার ত্রুটি (${res.status}): ঠিকানা সংরক্ষণ করা যায়নি।`
+        };
+      }
+      const savedUser = payload.user as UserProfile;
+      mergeServerUserIntoList(savedUser);
+      if (savedUser.id && savedUser.id !== currentUser.id) {
+        setCurrentUserId(savedUser.id);
+        try {
+          localStorage.setItem(STORAGE_CURRENT_USER_ID_KEY, savedUser.id);
+        } catch {}
+      }
+      addAuditLog('UPDATE_ADDRESS', 'ServiceAddress', `Updated mandatory Bangladesh service address in database`);
+      return {
+        success: true,
+        message: payload.message || 'সার্ভিস ঠিকানা সফলভাবে ডাটাবেসে সংরক্ষিত হয়েছে!',
+        user: savedUser
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        message: err?.message || 'নেটওয়ার্ক ত্রুটির কারণে ঠিকানা সংরক্ষণ ব্যর্থ হয়েছে।'
+      };
+    }
   };
 
-  const submitKyc = (nid: string, dob: string, frontUrl?: string, backUrl?: string) => {
-    updateProfile({
+  const submitKyc = async (nid: string, dob: string, _frontUrl?: string, _backUrl?: string) => {
+    const res = await updateProfile({
       nationalId: nid,
-      dateOfBirth: dob,
-      verificationStatus: 'pending'
+      dateOfBirth: dob
     });
-    addAuditLog('SUBMIT_KYC', 'KycVerification', `Submitted NID (${nid}) for verification`);
+    if (res.success) {
+      setUsers((prev) =>
+        prev.map((u) => (u.id === currentUser.id ? { ...u, verificationStatus: 'pending' } : u))
+      );
+      addAuditLog('SUBMIT_KYC', 'KycVerification', `Submitted NID (${nid}) for verification`);
+    }
+    return res;
   };
 
   const approveKyc = (userId: string) => {
@@ -1463,7 +1796,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           'Content-Type': 'application/json',
           'x-user-role': currentUser?.primaryRole || activeRole || '',
           'x-user-id': currentUser?.id || '',
-          'x-user-name': currentUser?.fullName || ''
+          'x-user-name': encodeURIComponent(currentUser?.fullName || '')
         },
         body: JSON.stringify(newSettings)
       });
@@ -1540,6 +1873,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         tradeLicenseBusinessName: account.tradeLicenseBusinessName,
         tradeLicenseNumber: account.tradeLicenseNumber,
         dealerOwnerName: account.dealerOwnerName,
+        zoneId: account.zoneId ?? (idx !== -1 ? prev[idx].zoneId : undefined),
+        zoneName: account.zoneName ?? (idx !== -1 ? prev[idx].zoneName : undefined),
         mandatoryAddress: account.mandatoryAddress || (idx !== -1 ? prev[idx].mandatoryAddress : undefined),
         createdAt: account.createdAt,
         updatedAt: account.updatedAt
@@ -1553,11 +1888,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   };
 
-  const updateUserByAdmin = (
+  const updateUserByAdmin = async (
     userId: string,
     updatedData: Partial<UserProfile>,
     addressData?: Partial<ServiceAddress>
-  ) => {
+  ): Promise<{ success: boolean; message: string; user?: UserProfile }> => {
     // API/Context level security verification: Only Super Admin allowed
     if (!canAccessActiveUserList(currentUser)) {
       addAuditLog(
@@ -1571,89 +1906,87 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       };
     }
 
-    const target = users.find((u) => u.id === userId);
-    if (!target) {
-      return { success: false, message: 'ইউজার খুঁজে পাওয়া যায়নি!' };
-    }
-
-    // Check duplicate mobile
-    if (updatedData.mobileNumber && updatedData.mobileNumber !== target.mobileNumber) {
-      const normNew = normalizeBDMobileNumber(updatedData.mobileNumber);
-      const duplicate = users.find(
-        (u) => u.id !== userId && normalizeBDMobileNumber(u.mobileNumber) === normNew
-      );
-      if (duplicate) {
-        return { success: false, message: `মোবাইল নম্বর ${updatedData.mobileNumber} ইতোমধ্যে '${duplicate.fullName}' অ্যাকাউন্টে ব্যবহার করা হয়েছে!` };
-      }
-    }
-
-    // Check duplicate email if provided
-    if (updatedData.email && updatedData.email !== target.email) {
-      const duplicateEmail = users.find(
-        (u) => u.id !== userId && u.email.toLowerCase() === updatedData.email?.toLowerCase()
-      );
-      if (duplicateEmail) {
-        return { success: false, message: `ইমেইল ঠিকানা ${updatedData.email} ইতোমধ্যে ব্যবহৃত হচ্ছে!` };
-      }
-    }
-
+    const target = users.find((u) => u.id === userId || u.permanentMemberId === userId);
     // Protect permanent IDs and immutable root Super Admin constraints
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { id, permanentMemberId, aponUniqueId, ...safeData } = updatedData;
 
-    // Enforce Super Admin immutability constraints
     if (isImmutableSuperAdmin(userId) || userId === FIXED_SUPER_ADMIN_ID) {
       safeData.roles = ['founder', 'super_admin'];
       safeData.primaryRole = 'super_admin';
       safeData.accountStatus = 'active';
     }
 
-    const changedKeys = Object.keys(safeData);
+    const currentAddr = target?.mandatoryAddress || {
+      id: `addr-${userId}`,
+      userId,
+      title: 'Service Address',
+      division: 'ঢাকা',
+      district: 'ঢাকা',
+      upazila: 'ধানমন্ডি',
+      unionName: 'ধানমন্ডি আ/এ',
+      area: '',
+      postalCode: '1209',
+      isMandatoryServiceAddress: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
 
-    setUsers((prev) =>
-      prev.map((u) => {
-        if (u.id === userId) {
-          const currentAddr = u.mandatoryAddress || {
-            id: `addr-${Date.now()}`,
-            userId: u.id,
-            title: 'Service Address',
-            division: 'রংপুর',
-            district: 'ঠাকুরগাঁও',
-            upazila: 'ঠাকুরগাঁও সদর',
-            unionName: 'হাজীপাড়া',
-            area: 'কালীবাড়ী, হাজীপাড়া',
-            postalCode: '5100',
-            isMandatoryServiceAddress: true,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-          };
-
-          const mergedAddress = addressData
-            ? {
-                ...currentAddr,
-                ...addressData,
-                updatedAt: new Date().toISOString()
-              }
-            : currentAddr;
-
-          return {
-            ...u,
-            ...safeData,
-            mandatoryAddress: mergedAddress,
-            updatedAt: new Date().toISOString()
-          };
+    const mergedAddress = addressData
+      ? {
+          ...currentAddr,
+          ...addressData,
+          userId: target?.id || userId,
+          isMandatoryServiceAddress: true,
+          updatedAt: new Date().toISOString()
         }
-        return u;
-      })
-    );
+      : undefined;
 
-    addAuditLog(
-      'SUPER_ADMIN_EDIT_USER_PROFILE',
-      'Users',
-      `Super Admin updated user profile: '${target.fullName}' (ID: ${target.permanentMemberId || userId}, Role: ${target.primaryRole}). Modified fields: ${changedKeys.join(', ')}`
-    );
+    try {
+      const res = await fetch(`/api/admin/active-users/${encodeURIComponent(userId)}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-id': currentUser.id,
+          'x-user-role': currentUser.primaryRole || activeRole || 'super_admin',
+          'x-user-name': encodeURIComponent(currentUser.fullName || 'Super Admin')
+        },
+        body: JSON.stringify({
+          ...safeData,
+          ...(mergedAddress ? { mandatoryAddress: mergedAddress } : {})
+        })
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok || !payload?.success) {
+        return {
+          success: false,
+          message: payload?.message || `সার্ভার ত্রুটি (${res.status}): প্রোফাইল আপডেট করা যায়নি!`
+        };
+      }
 
-    return { success: true, message: `ইউজার '${target.fullName}' এর প্রোফাইল তথ্য সফলভাবে আপডেট ও সংরক্ষিত হয়েছে!` };
+      const savedUser = (payload.data || payload.user) as UserProfile | undefined;
+      if (savedUser) {
+        mergeServerUserIntoList(savedUser);
+      }
+
+      const changedKeys = Object.keys(safeData);
+      addAuditLog(
+        'SUPER_ADMIN_EDIT_USER_PROFILE',
+        'Users',
+        `Super Admin updated user profile: '${savedUser?.fullName || target?.fullName || userId}' (ID: ${savedUser?.permanentMemberId || userId}). Modified fields: ${changedKeys.join(', ')}`
+      );
+
+      return {
+        success: true,
+        message: `ইউজার '${savedUser?.fullName || target?.fullName || userId}' এর প্রোফাইল তথ্য সফলভাবে ডাটাবেসে আপডেট ও সংরক্ষিত হয়েছে!`,
+        user: savedUser
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        message: err?.message || 'নেটওয়ার্ক ত্রুটির কারণে প্রোফাইল আপডেট ব্যর্থ হয়েছে।'
+      };
+    }
   };
 
   const resetUserPasswordBySuperAdmin = async (
@@ -2426,6 +2759,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         linkBinaryCompanyId,
         setUserTokenBalance,
         logout,
+        refreshCurrentUserProfile,
+        refreshAllUsersForSuperAdmin,
         updateProfile,
         updateServiceAddress,
         updateMandatoryAddress: updateServiceAddress,

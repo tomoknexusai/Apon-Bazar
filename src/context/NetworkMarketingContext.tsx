@@ -6,6 +6,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useAuth } from './AuthContext';
 import { useNotifications } from './NotificationContext';
+import { Gender, ServiceAddress } from '../types';
 import {
   ActivationPackage,
   AIActivationPlacementResult,
@@ -663,7 +664,19 @@ interface NetworkMarketingContextType {
   processPendingHoldingAutoRelease: () => void;
   
   // Admin Configuration Operations
-  updateMemberProfile: (targetUserId: string, data: { fullName?: string; mobile?: string; email?: string; avatarUrl?: string }) => void;
+  updateMemberProfile: (
+    targetUserId: string,
+    data: {
+      fullName?: string;
+      mobile?: string;
+      email?: string;
+      avatarUrl?: string;
+      gender?: Gender;
+      dateOfBirth?: string;
+      address?: string;
+      mandatoryAddress?: Partial<ServiceAddress>;
+    }
+  ) => void;
   updateCommissionConfig: (newConfig: Partial<CommissionConfig>) => void;
   updatePackages: (packages: ActivationPackage[]) => void;
   updateRanks: (ranks: RankRequirement[]) => void;
@@ -2492,7 +2505,16 @@ export const NetworkMarketingProvider: React.FC<{ children: React.ReactNode }> =
   // ----------------------------------------------------------------------
   const updateMemberProfile = (
     targetUserId: string,
-    data: { fullName?: string; mobile?: string; email?: string; avatarUrl?: string }
+    data: {
+      fullName?: string;
+      mobile?: string;
+      email?: string;
+      avatarUrl?: string;
+      gender?: Gender;
+      dateOfBirth?: string;
+      address?: string;
+      mandatoryAddress?: Partial<ServiceAddress>;
+    }
   ) => {
     setMembers((prev) =>
       prev.map((m) => {
@@ -2502,7 +2524,18 @@ export const NetworkMarketingProvider: React.FC<{ children: React.ReactNode }> =
             ...(data.fullName ? { fullName: data.fullName } : {}),
             ...(data.mobile ? { mobile: data.mobile } : {}),
             ...(data.email ? { email: data.email } : {}),
-            ...(data.avatarUrl !== undefined ? { avatarUrl: data.avatarUrl } : {})
+            ...(data.avatarUrl !== undefined ? { avatarUrl: data.avatarUrl } : {}),
+            ...(data.gender !== undefined ? { gender: data.gender } : {}),
+            ...(data.dateOfBirth !== undefined ? { dateOfBirth: data.dateOfBirth } : {}),
+            ...(data.address !== undefined ? { address: data.address } : {}),
+            ...(data.mandatoryAddress !== undefined
+              ? {
+                  mandatoryAddress: {
+                    ...(m.mandatoryAddress || {}),
+                    ...data.mandatoryAddress
+                  } as ServiceAddress
+                }
+              : {})
           };
         }
         return m;

@@ -1478,6 +1478,130 @@ export function createBinaryTreeStore(customStorePath?: string) {
       });
     },
 
+    updateMemberProfileFields: async (params: {
+      memberIdOrUserId: string;
+      fullName?: string;
+      mobile?: string;
+      email?: string;
+      avatarUrl?: string;
+      nidNumber?: string;
+      address?: string;
+      gender?: 'male' | 'female' | 'other';
+      dateOfBirth?: string;
+      latitude?: number;
+      longitude?: number;
+      mandatoryAddress?: Partial<import('../types').ServiceAddress>;
+    }): Promise<{ updated: boolean; node?: NetworkMember }> => {
+      return runWithLock(() => {
+        const key = (params.memberIdOrUserId || '').trim().toLowerCase();
+        if (!key) return { updated: false };
+        const payload = loadAndReconcileFromDisk();
+        let matchedNode: NetworkMember | undefined;
+        const nowIso = new Date().toISOString();
+
+        const nextNodes = payload.treeState.nodes.map((n) => {
+          if (n.nodeStatus === 'blank' || n.isBlankSlot) return n;
+          const isMatch =
+            n.id.toLowerCase() === key ||
+            (n.userId || '').toLowerCase() === key ||
+            (n.customerId || '').toLowerCase() === key;
+          if (!isMatch) return n;
+
+          let nextMandatoryAddress = n.mandatoryAddress;
+          if (params.mandatoryAddress) {
+            const baseAddr: import('../types').ServiceAddress = n.mandatoryAddress || {
+              id: `addr-${n.id}`,
+              userId: n.userId || n.id,
+              title: 'Service Address',
+              userType: 'customer',
+              division: '',
+              district: '',
+              upazila: '',
+              unionName: '',
+              area: n.address || '',
+              postalCode: '',
+              isMandatoryServiceAddress: true,
+              createdAt: nowIso,
+              updatedAt: nowIso
+            };
+            const mergedAddr: import('../types').ServiceAddress = {
+              ...baseAddr,
+              ...params.mandatoryAddress,
+              id: baseAddr.id,
+              userId: n.userId || n.id,
+              isMandatoryServiceAddress: true,
+              updatedAt: nowIso
+            };
+            if (!params.mandatoryAddress.fullServiceAddress?.trim()) {
+              const parts = [
+                mergedAddr.houseNo,
+                mergedAddr.roadNo,
+                mergedAddr.area,
+                mergedAddr.ward,
+                mergedAddr.unionName,
+                mergedAddr.upazila,
+                mergedAddr.district,
+                mergedAddr.division
+              ]
+                .map((p) => (p || '').trim())
+                .filter(Boolean);
+              if (parts.length > 0) {
+                mergedAddr.fullServiceAddress = mergedAddr.postalCode
+                  ? `${parts.join(', ')} (${mergedAddr.postalCode})`
+                  : parts.join(', ');
+              }
+            }
+            nextMandatoryAddress = mergedAddr;
+          }
+
+          const resolvedAddrStr =
+            nextMandatoryAddress?.fullServiceAddress ||
+            (params.address !== undefined ? params.address : n.address);
+
+          matchedNode = {
+            ...n,
+            fullName: params.fullName !== undefined ? params.fullName : n.fullName,
+            mobile: params.mobile !== undefined ? params.mobile : n.mobile,
+            email: params.email !== undefined ? params.email : n.email,
+            avatarUrl: params.avatarUrl !== undefined ? params.avatarUrl : n.avatarUrl,
+            nidNumber: params.nidNumber !== undefined ? params.nidNumber : n.nidNumber,
+            gender: params.gender !== undefined ? params.gender : n.gender,
+            dateOfBirth: params.dateOfBirth !== undefined ? params.dateOfBirth : n.dateOfBirth,
+            latitude:
+              params.mandatoryAddress?.latitude ?? params.latitude ?? n.latitude,
+            longitude:
+              params.mandatoryAddress?.longitude ?? params.longitude ?? n.longitude,
+            mandatoryAddress: nextMandatoryAddress,
+            address: resolvedAddrStr,
+            updated_at: nowIso
+          };
+          return matchedNode;
+        });
+
+        if (!matchedNode) {
+          return { updated: false };
+        }
+
+        const reconciled = reconcileBinaryTreeState(
+          nextNodes,
+          payload.treeState.lastCompanySeq,
+          payload.treeState.allocatedIds,
+          payload.treeState.version + 1,
+          payload.treeState.lastAbCustomerSeq,
+          payload.treeState.idMigrationMappings,
+          payload.treeState.migrationReport
+        );
+
+        const nextPayload: PersistedBinaryStorePayload = {
+          treeState: reconciled,
+          matchingHistory: payload.matchingHistory,
+          emailDeliveryLogs: payload.emailDeliveryLogs || []
+        };
+        savePayload(nextPayload);
+        return { updated: true, node: matchedNode };
+      });
+    },
+
     syncSnapshotIfNewer: async (nodes: NetworkMember[], matchingHistory?: MatchingRecord[]) => {
       return runWithLock(() => {
         const payload = loadAndReconcileFromDisk();

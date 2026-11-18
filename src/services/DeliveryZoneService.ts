@@ -294,8 +294,14 @@ export function getZoneByUpazila(
       (z) => normalizeGeoText(z.district_name).includes(normDist) || normDist.includes(normalizeGeoText(z.district_name))
     );
     if (districtZones.length > 0) {
-      // Pick Sadar upazila of the district if possible
-      const sadar = districtZones.find((z) => z.upazila_name.includes('সদর') || (z.upazila_name_en && z.upazila_name_en.toLowerCase().includes('sadar')));
+      // Pick Sadar / City Corporation upazila of the district if possible
+      const sadar = districtZones.find(
+        (z) =>
+          z.upazila_name.includes('সদর') ||
+          (z.upazila_name_en && z.upazila_name_en.toLowerCase().includes('sadar')) ||
+          z.upazila_name.includes('সিটি কর্পোরেশন') ||
+          (z.upazila_name_en && z.upazila_name_en.toLowerCase().includes('city corporation'))
+      );
       return sadar || districtZones[0];
     }
   }
@@ -325,7 +331,118 @@ export function getZoneByUpazila(
 }
 
 /**
- * Determine Dealer/Seller Zone from Dealer registered address
+ * Resolve canonical DeliveryZone from a Zone Name, Upazila Name, or District Name (Bangla or English)
+ */
+export function resolveZoneFromNameOrText(zoneText?: string | null): DeliveryZone | undefined {
+  if (!zoneText || !zoneText.trim()) return undefined;
+  const allZones = getAllDeliveryZones();
+  const trimmed = zoneText.trim();
+
+  // Direct Zone ID
+  const directById = zoneByIdMap.get(trimmed);
+  if (directById) return directById;
+
+  const normText = normalizeGeoText(trimmed);
+  if (!normText) return undefined;
+
+  // Exact match on zone_name / zone_name_bn / upazila_name / upazila_name_en
+  const exactZone = allZones.find((z) => {
+    const candidates = [
+      z.zone_name,
+      z.zone_name_bn,
+      z.zone_name_en,
+      z.upazila_name,
+      z.upazila_name_en
+    ];
+    return candidates.some((c) => c && normalizeGeoText(c) === normText);
+  });
+  if (exactZone) return exactZone;
+
+  // Exact or close District match (Bangla or English, including Chattogram/Chittagong)
+  const aliasDist =
+    normText.includes('chittagong') || normText.includes('chattogram') || normText.includes('চট্টগ্রাম') || normText.includes('চট্রগ্রাম')
+      ? 'চট্টগ্রাম'
+      : normText.includes('thakurgaon') || normText.includes('ঠাকুরগাঁও')
+      ? 'ঠাকুরগাঁও'
+      : null;
+
+  const districtMatches = allZones.filter((z) => {
+    const dBn = normalizeGeoText(z.district_name);
+    const dEn = normalizeGeoText(z.district_name_en);
+    if (aliasDist && dBn === normalizeGeoText(aliasDist)) return true;
+    return (
+      (dBn && (dBn === normText || normText.includes(dBn))) ||
+      (dEn && (dEn === normText || normText.includes(dEn)))
+    );
+  });
+
+  if (districtMatches.length > 0) {
+    // Check if an upazila name also appears in the text
+    const upzInDistrict = districtMatches.find((z) => {
+      const uBn = normalizeGeoText(z.upazila_name);
+      const uEn = normalizeGeoText(z.upazila_name_en);
+      return (uBn && normText.includes(uBn)) || (uEn && normText.includes(uEn));
+    });
+    if (upzInDistrict) return upzInDistrict;
+
+    const sadar = districtMatches.find(
+      (z) =>
+        z.upazila_name.includes('সদর') ||
+        (z.upazila_name_en && z.upazila_name_en.toLowerCase().includes('sadar')) ||
+        z.upazila_name.includes('সিটি কর্পোরেশন') ||
+        (z.upazila_name_en && z.upazila_name_en.toLowerCase().includes('city corporation'))
+    );
+    return sadar || districtMatches[0];
+  }
+
+  // Substring match against zone_name / upazila
+  const partialZone = allZones.find((z) => {
+    const zBn = normalizeGeoText(z.zone_name_bn);
+    const zEn = normalizeGeoText(z.zone_name_en);
+    const uBn = normalizeGeoText(z.upazila_name);
+    const uEn = normalizeGeoText(z.upazila_name_en);
+    return (
+      (zBn && (normText.includes(zBn) || zBn.includes(normText))) ||
+      (zEn && (normText.includes(zEn) || zEn.includes(normText))) ||
+      (uBn && (normText.includes(uBn) || uBn.includes(normText))) ||
+      (uEn && (normText.includes(uEn) || uEn.includes(normText)))
+    );
+  });
+  return partialZone;
+}
+
+/**
+ * Resolve Dealer/Shop DeliveryZone from explicit zoneId / zoneName first, then mandatoryAddress.
+ */
+export function resolveDealerZone(
+  dealer?: {
+    zoneId?: string | null;
+    zoneName?: string | null;
+    mandatoryAddress?: {
+      upazila?: string;
+      district?: string;
+      division?: string;
+      fullServiceAddress?: string;
+    } | null;
+  } | null
+): DeliveryZone {
+  if (dealer?.zoneId) {
+    const byId = getZoneById(dealer.zoneId);
+    if (byId) return byId;
+  }
+  if (dealer?.zoneName) {
+    const byName = resolveZoneFromNameOrText(dealer.zoneName);
+    if (byName) return byName;
+  }
+  const addr = dealer?.mandatoryAddress;
+  if (addr && (addr.upazila || addr.district || addr.division)) {
+    return getZoneByUpazila(addr.upazila, addr.district, addr.division);
+  }
+  return getZoneByUpazila('ঠাকুরগাঁও সদর', 'ঠাকুরগাঁও', 'রংপুর');
+}
+
+/**
+ * Determine Dealer/Seller Zone from Dealer registered address (or optional explicit zoneId/zoneName)
  * Rule: Dealer/Seller Division -> District -> Upazila/Thana => Zone ID = Upazila ID
  */
 export function getZoneForDealer(
@@ -334,9 +451,22 @@ export function getZoneForDealer(
     district?: string;
     division?: string;
     fullServiceAddress?: string;
-  } | null
+  } | null,
+  explicitZone?: { zoneId?: string | null; zoneName?: string | null } | string | null
 ): DeliveryZone {
-  if (!dealerAddress) {
+  if (explicitZone) {
+    const zId = typeof explicitZone === 'string' ? explicitZone : explicitZone.zoneId;
+    const zName = typeof explicitZone === 'string' ? explicitZone : explicitZone.zoneName;
+    if (zId) {
+      const byId = getZoneById(zId);
+      if (byId) return byId;
+    }
+    if (zName) {
+      const byName = resolveZoneFromNameOrText(zName);
+      if (byName) return byName;
+    }
+  }
+  if (!dealerAddress || (!dealerAddress.upazila && !dealerAddress.district && !dealerAddress.division)) {
     return getZoneByUpazila('ঠাকুরগাঁও সদর', 'ঠাকুরগাঁও', 'রংপুর');
   }
 

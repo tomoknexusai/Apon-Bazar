@@ -7,7 +7,8 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import type { UserRole } from '../types';
+import type { Gender, ServiceAddress, UserRole } from '../types';
+import { isValidEmailAddress } from './companySettingsStore';
 
 export interface CompanyAccountAuthRecord {
   userId: string;
@@ -16,6 +17,11 @@ export interface CompanyAccountAuthRecord {
   fullName: string;
   email: string;
   mobileNumber: string;
+  profilePhotoUrl?: string;
+  nationalId?: string;
+  dateOfBirth?: string;
+  gender?: Gender;
+  mandatoryAddress?: ServiceAddress;
   parentCompanyId: string | null;
   placementPosition: 'ROOT' | 'LEFT' | 'RIGHT';
   primaryRole: UserRole;
@@ -211,12 +217,22 @@ export function createCompanyAccountsAuthStore(customStorePath?: string) {
             }
           }
 
-          // Reconcile canonical 7 accounts without creating duplicates and preserving password changes
+          // Reconcile canonical 7 accounts without creating duplicates and preserving saved profile & password changes
           const merged: CompanyAccountAuthRecord[] = canonical.map((canon) => {
             const existing = existingByCompanyId.get(canon.companyId);
             if (!existing) return canon;
             return {
               ...canon,
+              fullName: existing.fullName || canon.fullName,
+              email: existing.email || canon.email,
+              mobileNumber: existing.mobileNumber || canon.mobileNumber,
+              profilePhotoUrl: existing.profilePhotoUrl,
+              nationalId: existing.nationalId,
+              dateOfBirth: existing.dateOfBirth,
+              gender: existing.gender,
+              mandatoryAddress: existing.mandatoryAddress,
+              primaryRole: existing.primaryRole || canon.primaryRole,
+              roles: Array.isArray(existing.roles) && existing.roles.length > 0 ? existing.roles : canon.roles,
               passwordHash: existing.passwordHash || canon.passwordHash,
               mustChangePassword:
                 typeof existing.mustChangePassword === 'boolean'
@@ -413,6 +429,193 @@ export function createCompanyAccountsAuthStore(customStorePath?: string) {
       });
     },
 
+    findAccountSanitized: async (identifierOrUserId: string): Promise<SanitizedCompanyAccount | null> => {
+      return runWithLock(() => {
+        const payload = loadAndDeduplicate();
+        const cleanId = (identifierOrUserId || '').trim();
+        if (!cleanId) return null;
+        const upper = cleanId.toUpperCase();
+        const lower = cleanId.toLowerCase();
+        const found = payload.accounts.find(
+          (a) =>
+            a.companyId.toUpperCase() === upper ||
+            a.username.toUpperCase() === upper ||
+            a.userId.toLowerCase() === lower
+        );
+        return found ? sanitizeAccount(found) : null;
+      });
+    },
+
+    updateCompanyProfile: async (params: {
+      identifierOrUserId: string;
+      allowAdminFields?: boolean;
+      updates: {
+        fullName?: string;
+        email?: string;
+        mobileNumber?: string;
+        profilePhotoUrl?: string;
+        nationalId?: string;
+        dateOfBirth?: string;
+        gender?: Gender;
+        mandatoryAddress?: Partial<ServiceAddress>;
+        roles?: UserRole[];
+        primaryRole?: UserRole;
+      };
+    }): Promise<{
+      success: boolean;
+      statusCode: number;
+      message: string;
+      account?: SanitizedCompanyAccount;
+    }> => {
+      return runWithLock(() => {
+        const payload = loadAndDeduplicate();
+        const cleanId = (params.identifierOrUserId || '').trim();
+        const upper = cleanId.toUpperCase();
+        const lower = cleanId.toLowerCase();
+
+        const idx = payload.accounts.findIndex(
+          (a) =>
+            a.companyId.toUpperCase() === upper ||
+            a.username.toUpperCase() === upper ||
+            a.userId.toLowerCase() === lower
+        );
+
+        if (idx === -1) {
+          return {
+            success: false,
+            statusCode: 404,
+            message: 'কোম্পানি অ্যাকাউন্টটি খুঁজে পাওয়া যায়নি।'
+          };
+        }
+
+        const existing = payload.accounts[idx];
+        const up = params.updates || {};
+
+        const nextFullName =
+          up.fullName !== undefined ? String(up.fullName).trim() : existing.fullName;
+        if (!nextFullName) {
+          return {
+            success: false,
+            statusCode: 400,
+            message: 'পূর্ণ নাম (Full Name) খালি রাখা যাবে না।'
+          };
+        }
+
+        const nextEmail =
+          up.email !== undefined ? String(up.email).trim().toLowerCase() : existing.email;
+        if (!nextEmail || !isValidEmailAddress(nextEmail)) {
+          return {
+            success: false,
+            statusCode: 400,
+            message: 'সঠিক ও বৈধ ইমেইল ঠিকানা প্রদান করুন।'
+          };
+        }
+
+        let nextMobile = existing.mobileNumber;
+        if (up.mobileNumber !== undefined) {
+          const norm = normalizeDigits(String(up.mobileNumber));
+          if (!norm || norm.length < 11) {
+            return {
+              success: false,
+              statusCode: 400,
+              message: 'সঠিক ১১ ডিজিটের বাংলাদেশ মোবাইল নম্বর প্রদান করুন।'
+            };
+          }
+          nextMobile = norm;
+        }
+
+        if (
+          payload.accounts.some(
+            (a) => a.userId !== existing.userId && a.email.trim().toLowerCase() === nextEmail
+          )
+        ) {
+          return {
+            success: false,
+            statusCode: 409,
+            message: `ইমেইল '${nextEmail}' ইতিমধ্যেই অন্য একটি কোম্পানি অ্যাকাউন্টে ব্যবহৃত হচ্ছে।`
+          };
+        }
+
+        if (params.allowAdminFields && existing.companyId === 'AB-1000000001') {
+          if (up.primaryRole && up.primaryRole !== 'super_admin') {
+            return {
+              success: false,
+              statusCode: 403,
+              message: 'কোম্পানি মাস্টার সুপার এডমিন (AB-1000000001) এর রোল পরিবর্তন করা যাবে না।'
+            };
+          }
+        }
+
+        const nowIso = new Date().toISOString();
+        const nextAddress: ServiceAddress | undefined = up.mandatoryAddress
+          ? {
+              ...(existing.mandatoryAddress || {
+                id: `addr-${existing.companyId}`,
+                userId: existing.userId,
+                title: 'Service Address',
+                userType: 'customer',
+                division: '',
+                district: '',
+                upazila: '',
+                unionName: '',
+                area: '',
+                postalCode: '',
+                isMandatoryServiceAddress: true,
+                createdAt: nowIso,
+                updatedAt: nowIso
+              }),
+              ...up.mandatoryAddress,
+              userId: existing.userId,
+              isMandatoryServiceAddress: true,
+              updatedAt: nowIso
+            }
+          : existing.mandatoryAddress;
+
+        const updated: CompanyAccountAuthRecord = {
+          ...existing,
+          fullName: nextFullName,
+          email: nextEmail,
+          mobileNumber: nextMobile,
+          profilePhotoUrl:
+            up.profilePhotoUrl !== undefined
+              ? String(up.profilePhotoUrl).trim()
+              : existing.profilePhotoUrl,
+          nationalId:
+            up.nationalId !== undefined ? String(up.nationalId).trim() : existing.nationalId,
+          dateOfBirth:
+            up.dateOfBirth !== undefined ? String(up.dateOfBirth).trim() : existing.dateOfBirth,
+          gender: up.gender !== undefined ? up.gender : existing.gender,
+          mandatoryAddress: nextAddress,
+          roles:
+            params.allowAdminFields && Array.isArray(up.roles) && up.roles.length > 0
+              ? existing.companyId === 'AB-1000000001'
+                ? Array.from(new Set<UserRole>(['super_admin', ...up.roles]))
+                : up.roles
+              : existing.roles,
+          primaryRole:
+            params.allowAdminFields && up.primaryRole
+              ? existing.companyId === 'AB-1000000001'
+                ? 'super_admin'
+                : up.primaryRole
+              : existing.primaryRole,
+          updatedAt: nowIso
+        };
+
+        const nextAccounts = [...payload.accounts];
+        nextAccounts[idx] = updated;
+        const nextPayload = { ...payload, accounts: nextAccounts };
+        writeAtomicSync(nextPayload);
+        cached = nextPayload;
+
+        return {
+          success: true,
+          statusCode: 200,
+          message: `অ্যাকাউন্ট '${updated.companyId}' এর প্রোফাইল তথ্য সফলভাবে আপডেট হয়েছে।`,
+          account: sanitizeAccount(updated)
+        };
+      });
+    },
+
     hasCredentialConflict: (params: { username?: string; email?: string; excludeId?: string }) => {
       const payload = loadAndDeduplicate();
       if (params.username) {
@@ -421,6 +624,7 @@ export function createCompanyAccountsAuthStore(customStorePath?: string) {
           payload.accounts.some(
             (a) =>
               a.userId !== params.excludeId &&
+              a.companyId !== params.excludeId &&
               (a.username.trim().toLowerCase() === uLower ||
                 a.companyId.trim().toLowerCase() === uLower)
           )
@@ -432,7 +636,10 @@ export function createCompanyAccountsAuthStore(customStorePath?: string) {
         const eLower = params.email.trim().toLowerCase();
         if (
           payload.accounts.some(
-            (a) => a.userId !== params.excludeId && a.email.trim().toLowerCase() === eLower
+            (a) =>
+              a.userId !== params.excludeId &&
+              a.companyId !== params.excludeId &&
+              a.email.trim().toLowerCase() === eLower
           )
         ) {
           return 'email' as const;

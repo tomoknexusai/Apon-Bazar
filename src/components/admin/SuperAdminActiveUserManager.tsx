@@ -10,6 +10,12 @@ import { canAccessActiveUserList } from '../../lib/rbac';
 import { AccessDenied403 } from '../common/AccessDenied403';
 import { UserProfile, UserRole, AccountStatus, KycStatus } from '../../types';
 import {
+  getAllDeliveryZones,
+  getZoneById,
+  getZoneByUpazila,
+  resolveDealerZone
+} from '../../services/DeliveryZoneService';
+import {
   ShieldAlert,
   Search,
   Filter,
@@ -49,6 +55,7 @@ export const SuperAdminActiveUserManager: React.FC = () => {
     currentUser,
     getActiveUsersForSuperAdmin,
     allUsers,
+    refreshAllUsersForSuperAdmin,
     updateUserStatusByAdmin,
     updateUserByAdmin,
     enterUserDashboard,
@@ -58,6 +65,12 @@ export const SuperAdminActiveUserManager: React.FC = () => {
 
   // Strict RBAC Verification: Is requesting user Super Admin?
   const isSuperAdmin = canAccessActiveUserList(currentUser);
+
+  useEffect(() => {
+    if (isSuperAdmin) {
+      void refreshAllUsersForSuperAdmin();
+    }
+  }, [isSuperAdmin, refreshAllUsersForSuperAdmin]);
 
   // Search & Filter State
   const [searchTerm, setSearchTerm] = useState('');
@@ -81,6 +94,7 @@ export const SuperAdminActiveUserManager: React.FC = () => {
   const [editUpazila, setEditUpazila] = useState<string>('ধানমন্ডি');
   const [editArea, setEditArea] = useState<string>('');
   const [editFullAddress, setEditFullAddress] = useState<string>('');
+  const [editZoneId, setEditZoneId] = useState<string>('upz_435');
   const [editAccountStatus, setEditAccountStatus] = useState<AccountStatus>('active');
   const [editSuccessMsg, setEditSuccessMsg] = useState<string>('');
   const [editErrorMsg, setEditErrorMsg] = useState<string>('');
@@ -176,6 +190,7 @@ export const SuperAdminActiveUserManager: React.FC = () => {
     setEditUpazila(user.mandatoryAddress?.upazila || 'ধানমন্ডি');
     setEditArea(user.mandatoryAddress?.area || '');
     setEditFullAddress(user.mandatoryAddress?.fullServiceAddress || '');
+    setEditZoneId(resolveDealerZone(user).zone_id);
     setEditAccountStatus(user.accountStatus || 'active');
     setEditSuccessMsg('');
     setEditErrorMsg('');
@@ -201,6 +216,7 @@ export const SuperAdminActiveUserManager: React.FC = () => {
       setEditUpazila(selectedUser.mandatoryAddress?.upazila || 'ধানমন্ডি');
       setEditArea(selectedUser.mandatoryAddress?.area || '');
       setEditFullAddress(selectedUser.mandatoryAddress?.fullServiceAddress || '');
+      setEditZoneId(resolveDealerZone(selectedUser).zone_id);
       setEditAccountStatus(selectedUser.accountStatus || 'active');
     }
     setIsEditingProfile(false);
@@ -215,20 +231,36 @@ export const SuperAdminActiveUserManager: React.FC = () => {
     setEditSuccessMsg('');
     setEditErrorMsg('');
 
+    const isDealerOrVendor =
+      selectedUser.primaryRole === 'dealer' ||
+      selectedUser.primaryRole === 'vendor' ||
+      selectedUser.primaryRole === 'vendor_dealer_shop' ||
+      selectedUser.aponUniqueId?.startsWith('AponVDS-') ||
+      selectedUser.roles?.includes('dealer') ||
+      selectedUser.roles?.includes('vendor');
+    const resolvedZone = isDealerOrVendor
+      ? getZoneById(editZoneId) || getZoneByUpazila(editUpazila, editDistrict, editDivision)
+      : undefined;
+
     try {
-      await new Promise((resolve) => setTimeout(resolve, 300));
-      const res = updateUserByAdmin(
+      const res = await updateUserByAdmin(
         selectedUser.id,
         {
-          fullName: editFullName,
-          mobileNumber: editMobileNumber,
-          email: editEmail,
-          accountStatus: editAccountStatus
+          fullName: editFullName.trim(),
+          mobileNumber: editMobileNumber.trim(),
+          email: editEmail.trim(),
+          accountStatus: editAccountStatus,
+          ...(resolvedZone
+            ? {
+                zoneId: resolvedZone.zone_id,
+                zoneName: `${resolvedZone.zone_name_bn} (${resolvedZone.zone_name})`
+              }
+            : {})
         },
         {
-          division: editDivision,
-          district: editDistrict,
-          upazila: editUpazila,
+          division: resolvedZone ? resolvedZone.division_name : editDivision,
+          district: resolvedZone ? resolvedZone.district_name : editDistrict,
+          upazila: resolvedZone ? resolvedZone.upazila_name : editUpazila,
           area: editArea,
           fullServiceAddress: editFullAddress
         }
@@ -236,25 +268,36 @@ export const SuperAdminActiveUserManager: React.FC = () => {
 
       if (res.success) {
         setEditSuccessMsg(res.message || 'ইউজার প্রোফাইল ডাটাবেজে সফলভাবে আপডেট করা হয়েছে!');
-        setSelectedUser((prev) =>
-          prev
-            ? {
-                ...prev,
-                fullName: editFullName,
-                mobileNumber: editMobileNumber,
-                email: editEmail,
-                accountStatus: editAccountStatus,
-                mandatoryAddress: {
-                  ...prev.mandatoryAddress,
-                  division: editDivision,
-                  district: editDistrict,
-                  upazila: editUpazila,
-                  area: editArea,
-                  fullServiceAddress: editFullAddress
+        if (res.user) {
+          setSelectedUser(res.user);
+        } else {
+          setSelectedUser((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  fullName: editFullName.trim(),
+                  mobileNumber: editMobileNumber.trim(),
+                  email: editEmail.trim(),
+                  accountStatus: editAccountStatus,
+                  ...(resolvedZone
+                    ? {
+                        zoneId: resolvedZone.zone_id,
+                        zoneName: `${resolvedZone.zone_name_bn} (${resolvedZone.zone_name})`
+                      }
+                    : {}),
+                  mandatoryAddress: {
+                    ...prev.mandatoryAddress,
+                    division: resolvedZone ? resolvedZone.division_name : editDivision,
+                    district: resolvedZone ? resolvedZone.district_name : editDistrict,
+                    upazila: resolvedZone ? resolvedZone.upazila_name : editUpazila,
+                    area: editArea,
+                    fullServiceAddress: editFullAddress
+                  }
                 }
-              }
-            : null
-        );
+              : null
+          );
+        }
+        setIsEditingProfile(false);
       } else {
         setEditErrorMsg(res.message || 'প্রোফাইল আপডেট করতে ব্যর্থ হয়েছে!');
       }
@@ -1081,6 +1124,44 @@ export const SuperAdminActiveUserManager: React.FC = () => {
                     </select>
                   </div>
 
+                  {/* Delivery Zone Selector for Dealer / Vendor / Shop */}
+                  {(selectedUser.primaryRole === 'dealer' ||
+                    selectedUser.primaryRole === 'vendor' ||
+                    selectedUser.primaryRole === 'vendor_dealer_shop' ||
+                    selectedUser.aponUniqueId?.startsWith('AponVDS-') ||
+                    selectedUser.roles?.includes('dealer') ||
+                    selectedUser.roles?.includes('vendor')) && (
+                    <div className="space-y-1 sm:col-span-2">
+                      <label
+                        htmlFor="superadmin-active-edit-zone-select"
+                        className="font-bold text-neutral-700 dark:text-neutral-300 block"
+                      >
+                        ডেলিভারি / ডিলার জোন (Delivery Zone) *
+                      </label>
+                      <select
+                        id="superadmin-active-edit-zone-select"
+                        value={editZoneId}
+                        onChange={(e) => {
+                          const nextZoneId = e.target.value;
+                          setEditZoneId(nextZoneId);
+                          const z = getZoneById(nextZoneId);
+                          if (z) {
+                            setEditDivision(z.division_name);
+                            setEditDistrict(z.district_name);
+                            setEditUpazila(z.upazila_name);
+                          }
+                        }}
+                        className="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 text-neutral-900 dark:text-white font-bold rounded-xl p-2.5"
+                      >
+                        {getAllDeliveryZones().map((z) => (
+                          <option key={z.zone_id} value={z.zone_id}>
+                            {z.district_name} — {z.zone_name_bn} ({z.zone_name})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
                   {/* Division */}
                   <div className="space-y-1">
                     <label className="font-bold text-neutral-700 dark:text-neutral-300 block">বিভাগ</label>
@@ -1213,6 +1294,23 @@ export const SuperAdminActiveUserManager: React.FC = () => {
                       {selectedUser.tomokTokenBalance?.toLocaleString() || 0} TOMOK
                     </p>
                   </div>
+
+                  {(selectedUser.primaryRole === 'dealer' ||
+                    selectedUser.primaryRole === 'vendor' ||
+                    selectedUser.primaryRole === 'vendor_dealer_shop' ||
+                    selectedUser.aponUniqueId?.startsWith('AponVDS-') ||
+                    selectedUser.zoneId ||
+                    selectedUser.zoneName) && (
+                    <div className="p-3.5 bg-neutral-50 dark:bg-neutral-800/60 rounded-xl border border-neutral-200 dark:border-neutral-700/80 space-y-1 sm:col-span-2">
+                      <span className="text-[10px] text-neutral-500 font-bold uppercase block">ডেলিভারি / ডিলার জোন (Delivery Zone)</span>
+                      <p className="font-bold text-emerald-600 dark:text-emerald-400">
+                        {(() => {
+                          const z = resolveDealerZone(selectedUser);
+                          return `${z.zone_name_bn} (${z.zone_name}) — ${z.district_name}, ${z.division_name} [${z.zone_id}]`;
+                        })()}
+                      </p>
+                    </div>
+                  )}
 
                   <div className="p-3.5 bg-neutral-50 dark:bg-neutral-800/60 rounded-xl border border-neutral-200 dark:border-neutral-700/80 space-y-1 sm:col-span-2">
                     <span className="text-[10px] text-neutral-500 font-bold uppercase block">বাধ্যতামূলক সেবা ঠিকানা (Mandatory Address)</span>

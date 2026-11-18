@@ -3,7 +3,7 @@
  * Project: Apon Bazar
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useECommerce } from '../../context/ECommerceContext';
 import { useLanguage } from '../../context/LanguageContext';
@@ -59,6 +59,7 @@ export const SuperAdminControlCenter: React.FC = () => {
     currentUser,
     allUsers,
     auditLogs,
+    refreshAllUsersForSuperAdmin,
     updateUserByAdmin,
     updateUserStatusByAdmin,
     addDeliveryRiderByAdmin
@@ -80,8 +81,13 @@ export const SuperAdminControlCenter: React.FC = () => {
   const { t, language } = useLanguage();
   const isBn = language === 'bn';
 
+  useEffect(() => {
+    void refreshAllUsersForSuperAdmin();
+  }, [refreshAllUsersForSuperAdmin]);
+
   // Active Tab
   const [activeTab, setActiveTab] = useState<ControlTab>('categories');
+  const [isSavingUser, setIsSavingUser] = useState<boolean>(false);
 
   // Filters & Search
   const [searchTerm, setSearchTerm] = useState('');
@@ -415,36 +421,41 @@ export const SuperAdminControlCenter: React.FC = () => {
     setShowUserModal(true);
   };
 
-  const handleSaveUserEdit = (e: React.FormEvent) => {
+  const handleSaveUserEdit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingUser) return;
+    if (!editingUser || isSavingUser) return;
 
     if (!editFullName.trim() || !editMobile.trim()) {
       triggerFeedback('error', 'ইউজারের নাম ও মোবাইল নম্বর পূরণ করুন!');
       return;
     }
 
-    const res = updateUserByAdmin(
-      editingUser.id,
-      {
-        fullName: editFullName.trim(),
-        mobileNumber: editMobile.trim(),
-        email: editEmail.trim(),
-        shopName: editShopName.trim() || undefined,
-        vehicleType: editVehicleType.trim() || undefined,
-        vehicleRegNumber: editVehicleReg.trim() || undefined,
-        drivingLicenseNumber: editDrivingLicense.trim() || undefined,
-        roles: editUserRoles,
-        primaryRole: editUserRoles[0] || editingUser.primaryRole
-      },
-      editAddressData
-    );
+    setIsSavingUser(true);
+    try {
+      const res = await updateUserByAdmin(
+        editingUser.id,
+        {
+          fullName: editFullName.trim(),
+          mobileNumber: editMobile.trim(),
+          email: editEmail.trim(),
+          shopName: editShopName.trim() || undefined,
+          vehicleType: editVehicleType.trim() || undefined,
+          vehicleRegNumber: editVehicleReg.trim() || undefined,
+          drivingLicenseNumber: editDrivingLicense.trim() || undefined,
+          roles: editUserRoles,
+          primaryRole: editUserRoles[0] || editingUser.primaryRole
+        },
+        editAddressData
+      );
 
-    if (res.success) {
-      triggerFeedback('success', res.message);
-      setShowUserModal(false);
-    } else {
-      triggerFeedback('error', res.message);
+      if (res.success) {
+        triggerFeedback('success', res.message || 'প্রোফাইল ডাটাবেজে সফলভাবে আপডেট হয়েছে!');
+        setShowUserModal(false);
+      } else {
+        triggerFeedback('error', res.message || 'প্রোফাইল আপডেট করতে ব্যর্থ হয়েছে!');
+      }
+    } finally {
+      setIsSavingUser(false);
     }
   };
 
@@ -1814,10 +1825,11 @@ export const SuperAdminControlCenter: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  disabled={!isAddressValid}
-                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg shadow-sm disabled:opacity-50"
+                  disabled={!isAddressValid || isSavingUser}
+                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg shadow-sm disabled:opacity-50 flex items-center gap-1.5"
                 >
-                  প্রোফাইল আপডেট করুন
+                  {isSavingUser && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                  <span>{isSavingUser ? 'সংরক্ষণ হচ্ছে...' : 'প্রোফাইল আপডেট করুন'}</span>
                 </button>
               </div>
             </form>

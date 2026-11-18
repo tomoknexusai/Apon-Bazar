@@ -3,6 +3,8 @@
  * Project: ঘরের বাজার বিডি (Ghorer Bazar BD)
  */
 
+import type { Gender, ServiceAddress } from './index';
+
 export type RankLevel =
   | 'customer'
   | 'network_member'
@@ -129,6 +131,11 @@ export interface NetworkMember {
   mobile: string;
   email: string;
   address?: string;
+  gender?: Gender;
+  dateOfBirth?: string;
+  latitude?: number;
+  longitude?: number;
+  mandatoryAddress?: ServiceAddress;
   nidNumber?: string; // Identity verification number (NID / Passport)
   kycStatus?: 'unverified' | 'pending' | 'verified' | 'rejected';
   registrationStatus?: 'pending' | 'completed';

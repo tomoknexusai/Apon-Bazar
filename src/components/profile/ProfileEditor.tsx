@@ -3,7 +3,7 @@
  * Project: ঘরের বাজার বিডি (Ghorer Bazar BD)
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth, normalizeBDMobileNumber } from '../../context/AuthContext';
 import { useNetworkMarketing } from '../../context/NetworkMarketingContext';
 import { useLanguage } from '../../context/LanguageContext';
@@ -25,7 +25,7 @@ import {
 } from 'lucide-react';
 
 export const ProfileEditor: React.FC = () => {
-  const { currentUser, allUsers, updateProfile, updateServiceAddress, submitKyc } = useAuth();
+  const { currentUser, allUsers, updateProfile, updateServiceAddress, submitKyc, refreshCurrentUserProfile } = useAuth();
   const { currentMember, ownCompanyMemberId, tokenSummary, updateMemberProfile } = useNetworkMarketing();
   const { language, t } = useLanguage();
 
@@ -33,7 +33,7 @@ export const ProfileEditor: React.FC = () => {
   const [email, setEmail] = useState(currentUser?.email || '');
   const [mobileNumber, setMobileNumber] = useState(currentUser?.mobileNumber || '');
   const [profilePhotoUrl, setProfilePhotoUrl] = useState(
-    currentUser?.profilePhotoUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=250'
+    currentUser?.profilePhotoUrl || ''
   );
   const [nationalId, setNationalId] = useState(currentUser?.nationalId || '');
   const [dateOfBirth, setDateOfBirth] = useState(currentUser?.dateOfBirth || '1995-01-01');
@@ -41,6 +41,7 @@ export const ProfileEditor: React.FC = () => {
   
   const [savedMsg, setSavedMsg] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
 
   // OTP Verification for Mobile Number Update
   const [showOtpModal, setShowOtpModal] = useState(false);
@@ -51,6 +52,34 @@ export const ProfileEditor: React.FC = () => {
   const [showKycModal, setShowKycModal] = useState(false);
   const [nidNumberInput, setNidNumberInput] = useState(currentUser?.nationalId || '');
   const [dobInput, setDobInput] = useState(currentUser?.dateOfBirth || '1995-01-01');
+
+  useEffect(() => {
+    if (currentUser?.id && currentUser.id !== 'guest') {
+      void refreshCurrentUserProfile(currentUser.id);
+    }
+  }, [currentUser?.id, refreshCurrentUserProfile]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    setFullName(currentUser.fullName || '');
+    setEmail(currentUser.email || '');
+    setMobileNumber(currentUser.mobileNumber || '');
+    setProfilePhotoUrl(currentUser.profilePhotoUrl || '');
+    setNationalId(currentUser.nationalId || '');
+    setDateOfBirth(currentUser.dateOfBirth || '1995-01-01');
+    setGender(currentUser.gender || 'male');
+    setNidNumberInput(currentUser.nationalId || '');
+    setDobInput(currentUser.dateOfBirth || '1995-01-01');
+  }, [
+    currentUser?.id,
+    currentUser?.fullName,
+    currentUser?.email,
+    currentUser?.mobileNumber,
+    currentUser?.profilePhotoUrl,
+    currentUser?.nationalId,
+    currentUser?.dateOfBirth,
+    currentUser?.gender
+  ]);
 
   if (!currentUser) {
     return (
@@ -89,12 +118,23 @@ export const ProfileEditor: React.FC = () => {
       })
     : '—';
 
-  const handleSaveProfile = (e: React.FormEvent) => {
+  const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
+    setSavedMsg(false);
 
     if (!fullName.trim()) {
       setErrorMsg(language === 'bn' ? 'পূর্ণ নাম প্রদান করা আবশ্যক।' : 'Full Name is required.');
+      return;
+    }
+
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+      setErrorMsg(
+        language === 'bn'
+          ? 'অনুগ্রহ করে একটি সঠিক ইমেইল ঠিকানা প্রদান করুন।'
+          : 'Please enter a valid email address.'
+      );
       return;
     }
 
@@ -135,10 +175,10 @@ export const ProfileEditor: React.FC = () => {
     }
 
     // Direct Save
-    executeSave(normMobile);
+    await executeSave(normMobile);
   };
 
-  const handleVerifyOtpAndSave = (e: React.FormEvent) => {
+  const handleVerifyOtpAndSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!otpInput.trim() || otpInput.length < 4) {
       setErrorMsg(
@@ -150,35 +190,52 @@ export const ProfileEditor: React.FC = () => {
     }
 
     setShowOtpModal(false);
-    executeSave(pendingMobile || normalizeBDMobileNumber(mobileNumber));
+    await executeSave(pendingMobile || normalizeBDMobileNumber(mobileNumber));
   };
 
-  const executeSave = (finalMobile: string) => {
-    updateProfile({
-      fullName: fullName.trim(),
-      email: email.trim(),
-      mobileNumber: finalMobile,
-      profilePhotoUrl: profilePhotoUrl.trim(),
-      nationalId,
-      dateOfBirth,
-      gender
-    });
-
-    updateMemberProfile(currentUser.id, {
-      fullName: fullName.trim(),
-      mobile: finalMobile,
-      email: email.trim(),
-      avatarUrl: profilePhotoUrl.trim()
-    });
-
-    setSavedMsg(true);
+  const executeSave = async (finalMobile: string) => {
+    setIsSaving(true);
     setErrorMsg('');
-    setTimeout(() => setSavedMsg(false), 4000);
+    setSavedMsg(false);
+    try {
+      const res = await updateProfile({
+        fullName: fullName.trim(),
+        email: email.trim(),
+        mobileNumber: finalMobile,
+        profilePhotoUrl: profilePhotoUrl.trim(),
+        nationalId: nationalId.trim(),
+        dateOfBirth,
+        gender
+      });
+
+      if (!res.success) {
+        setErrorMsg(
+          res.message ||
+            (language === 'bn'
+              ? 'প্রোফাইল তথ্য ডাটাবেজে সংরক্ষণ করা যায়নি।'
+              : 'Failed to save profile to database.')
+        );
+        return;
+      }
+
+      updateMemberProfile(currentUser.id, {
+        fullName: fullName.trim(),
+        mobile: finalMobile,
+        email: email.trim(),
+        avatarUrl: profilePhotoUrl.trim()
+      });
+
+      setSavedMsg(true);
+      setErrorMsg('');
+      setTimeout(() => setSavedMsg(false), 4000);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
-  const handleKycSubmit = (e: React.FormEvent) => {
+  const handleKycSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    submitKyc(nidNumberInput, dobInput);
+    await submitKyc(nidNumberInput, dobInput);
     setShowKycModal(false);
   };
 
@@ -370,30 +427,14 @@ export const ProfileEditor: React.FC = () => {
             <div className="space-y-1">
               <label className="font-medium text-neutral-700 dark:text-neutral-300 flex items-center justify-between">
                 <span>{t('fullName')} <span className="text-rose-500">*</span></span>
-                {!isSuperAdmin && (
-                  <span className="text-[10px] text-amber-600 dark:text-amber-400 font-bold flex items-center gap-1">
-                    <Lock className="w-3 h-3" /> আইডি হোল্ডার পরিবর্তন করতে পারবেন না
-                  </span>
-                )}
               </label>
               <input
                 type="text"
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
                 required
-                disabled={!isSuperAdmin}
-                readOnly={!isSuperAdmin}
-                className={`w-full rounded-lg p-2.5 font-medium transition-all ${
-                  !isSuperAdmin
-                    ? 'bg-neutral-200/80 dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400 cursor-not-allowed'
-                    : 'bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 text-neutral-900 dark:text-white focus:ring-1 focus:ring-emerald-500'
-                }`}
+                className="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg p-2.5 text-neutral-900 dark:text-white font-medium focus:ring-1 focus:ring-emerald-500 transition-all"
               />
-              {!isSuperAdmin && (
-                <p className="text-[10px] text-neutral-500 font-medium">
-                  🔒 সিকিউরিটি পলিসি: অ্যাকাউন্ট হোল্ডার নাম পরিবর্তন করতে পারবেন না (কেবলমাত্র সুপার এডমিন পরিবর্তন করতে পারেন)।
-                </p>
-              )}
             </div>
 
             {/* Email */}
@@ -414,30 +455,16 @@ export const ProfileEditor: React.FC = () => {
             <div className="space-y-1">
               <label className="font-medium text-neutral-700 dark:text-neutral-300 flex items-center justify-between">
                 <span>{t('mobileNumber')} <span className="text-rose-500">*</span></span>
-                {!isSuperAdmin && (
-                  <span className="text-[10px] text-amber-600 dark:text-amber-400 font-bold flex items-center gap-1">
-                    <Lock className="w-3 h-3" /> আইডি হোল্ডার পরিবর্তন করতে পারবেন না
-                  </span>
-                )}
+                <span className="text-[10px] text-emerald-600 font-semibold">BD Format 01XXXXXXXXX</span>
               </label>
               <input
                 type="text"
                 value={mobileNumber}
                 onChange={(e) => setMobileNumber(e.target.value)}
                 required
-                disabled={!isSuperAdmin}
-                readOnly={!isSuperAdmin}
-                className={`w-full rounded-lg p-2.5 font-medium transition-all ${
-                  !isSuperAdmin
-                    ? 'bg-neutral-200/80 dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400 cursor-not-allowed'
-                    : 'bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 text-neutral-900 dark:text-white focus:ring-1 focus:ring-emerald-500'
-                }`}
+                placeholder="017XXXXXXXX"
+                className="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg p-2.5 text-neutral-900 dark:text-white font-medium font-mono focus:ring-1 focus:ring-emerald-500 transition-all"
               />
-              {!isSuperAdmin && (
-                <p className="text-[10px] text-neutral-500 font-medium">
-                  🔒 সিকিউরিটি পলিসি: অ্যাকাউন্ট হোল্ডার মোবাইল নম্বর পরিবর্তন করতে পারবেন না (কেবলমাত্র সুপার এডমিন পরিবর্তন করতে পারেন)।
-                </p>
-              )}
             </div>
 
             {/* Profile Photo Management Section */}
@@ -536,9 +563,11 @@ export const ProfileEditor: React.FC = () => {
 
             <button
               type="submit"
-              className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg shadow transition-colors text-xs"
+              disabled={isSaving}
+              className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold rounded-lg shadow transition-colors text-xs flex items-center gap-1.5"
             >
-              {t('saveProfile')}
+              {isSaving && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+              <span>{isSaving ? (language === 'bn' ? 'সংরক্ষণ হচ্ছে...' : 'Saving...') : t('saveProfile')}</span>
             </button>
           </div>
         </form>
@@ -549,7 +578,9 @@ export const ProfileEditor: React.FC = () => {
         initialAddress={currentUser.mandatoryAddress}
         onSaveAddress={(addr) => updateServiceAddress(addr)}
         userType={
-          currentUser?.primaryRole === 'vendor'
+          currentUser?.primaryRole === 'vendor' ||
+          currentUser?.primaryRole === 'dealer' ||
+          currentUser?.primaryRole === 'vendor_dealer_shop'
             ? 'vendor'
             : currentUser?.primaryRole === 'operations_partner'
             ? 'operations_partner'

@@ -7,6 +7,11 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { ManagedStaffAccount, CredentialAuditLogRecord } from '../../types';
 import {
+  getAllDeliveryZones,
+  getZoneById,
+  resolveDealerZone
+} from '../../services/DeliveryZoneService';
+import {
   Truck,
   Store,
   Search,
@@ -114,6 +119,7 @@ export const StaffCredentialManager: React.FC<StaffCredentialManagerProps> = ({ 
   const [createDrivingLicense, setCreateDrivingLicense] = useState('');
   const [createShopName, setCreateShopName] = useState('');
   const [createTradeLicense, setCreateTradeLicense] = useState('');
+  const [createZoneId, setCreateZoneId] = useState('upz_435');
   const [createZoneName, setCreateZoneName] = useState('');
   const [createSubmitting, setCreateSubmitting] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -129,9 +135,18 @@ export const StaffCredentialManager: React.FC<StaffCredentialManagerProps> = ({ 
   const [editDrivingLicense, setEditDrivingLicense] = useState('');
   const [editShopName, setEditShopName] = useState('');
   const [editTradeLicense, setEditTradeLicense] = useState('');
+  const [editZoneId, setEditZoneId] = useState('upz_435');
   const [editZoneName, setEditZoneName] = useState('');
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+
+  const allDeliveryZones = useMemo(
+    () =>
+      [...getAllDeliveryZones()].sort((a, b) =>
+        `${a.district_name} ${a.upazila_name}`.localeCompare(`${b.district_name} ${b.upazila_name}`, 'bn')
+      ),
+    []
+  );
 
   // Reset Password Modal State
   const [resetTarget, setResetTarget] = useState<ManagedStaffAccount | null>(null);
@@ -243,7 +258,11 @@ export const StaffCredentialManager: React.FC<StaffCredentialManagerProps> = ({ 
     setCreateDrivingLicense('');
     setCreateShopName('');
     setCreateTradeLicense('');
-    setCreateZoneName('');
+    const defaultZone = getZoneById('upz_435') || allDeliveryZones[0];
+    setCreateZoneId(defaultZone?.zone_id || 'upz_435');
+    setCreateZoneName(
+      defaultZone ? `${defaultZone.zone_name_bn} (${defaultZone.zone_name})` : ''
+    );
     setCreateError(null);
     setShowCreateModal(true);
   };
@@ -265,6 +284,8 @@ export const StaffCredentialManager: React.FC<StaffCredentialManagerProps> = ({ 
       return;
     }
 
+    const chosenCreateZone = getZoneById(createZoneId);
+
     setCreateSubmitting(true);
     try {
       const resp = await fetch(apiBase, {
@@ -282,7 +303,15 @@ export const StaffCredentialManager: React.FC<StaffCredentialManagerProps> = ({ 
           drivingLicenseNumber: isRider ? createDrivingLicense.trim() : undefined,
           shopName: !isRider ? createShopName.trim() : undefined,
           tradeLicenseNumber: !isRider ? createTradeLicense.trim() : undefined,
-          zoneName: !isRider ? createZoneName.trim() : undefined
+          zoneId: !isRider ? (chosenCreateZone?.zone_id || createZoneId) : undefined,
+          zoneName: !isRider
+            ? chosenCreateZone
+              ? `${chosenCreateZone.zone_name_bn} (${chosenCreateZone.zone_name})`
+              : createZoneName.trim()
+            : undefined,
+          division: !isRider ? chosenCreateZone?.division_name : undefined,
+          district: !isRider ? chosenCreateZone?.district_name : undefined,
+          upazila: !isRider ? chosenCreateZone?.upazila_name : undefined
         })
       });
       const data = await resp.json().catch(() => ({}));
@@ -316,7 +345,15 @@ export const StaffCredentialManager: React.FC<StaffCredentialManagerProps> = ({ 
     setEditDrivingLicense(acc.drivingLicenseNumber || '');
     setEditShopName(acc.shopName || '');
     setEditTradeLicense(acc.tradeLicenseNumber || '');
-    setEditZoneName(acc.zoneName || '');
+    const resolvedAccZone = resolveDealerZone({
+      zoneId: acc.zoneId,
+      zoneName: acc.zoneName,
+      mandatoryAddress: acc.mandatoryAddress
+    });
+    setEditZoneId(resolvedAccZone.zone_id);
+    setEditZoneName(
+      acc.zoneName || `${resolvedAccZone.zone_name_bn} (${resolvedAccZone.zone_name})`
+    );
     setEditError(null);
   };
 
@@ -329,6 +366,8 @@ export const StaffCredentialManager: React.FC<StaffCredentialManagerProps> = ({ 
       setEditError('লগইন আইডি (Login ID) খালি রাখা যাবে না।');
       return;
     }
+
+    const chosenEditZone = getZoneById(editZoneId);
 
     setEditSubmitting(true);
     try {
@@ -345,7 +384,12 @@ export const StaffCredentialManager: React.FC<StaffCredentialManagerProps> = ({ 
           drivingLicenseNumber: isRider ? editDrivingLicense.trim() : undefined,
           shopName: !isRider ? editShopName.trim() : undefined,
           tradeLicenseNumber: !isRider ? editTradeLicense.trim() : undefined,
-          zoneName: !isRider ? editZoneName.trim() : undefined
+          zoneId: !isRider ? (chosenEditZone?.zone_id || editZoneId) : undefined,
+          zoneName: !isRider
+            ? chosenEditZone
+              ? `${chosenEditZone.zone_name_bn} (${chosenEditZone.zone_name})`
+              : editZoneName.trim()
+            : undefined
         })
       });
       const data = await resp.json().catch(() => ({}));
@@ -640,7 +684,19 @@ export const StaffCredentialManager: React.FC<StaffCredentialManagerProps> = ({ 
                       ) : (
                         <>
                           {acc.shopName && <span>শপ/ডিলার পয়েন্ট: <strong>{acc.shopName}</strong></span>}
-                          {acc.zoneName && <span>এলাকা: <strong>{acc.zoneName}</strong></span>}
+                          <span>
+                            জোন/এলাকা:{' '}
+                            <strong>
+                              {(() => {
+                                const z = resolveDealerZone({
+                                  zoneId: acc.zoneId,
+                                  zoneName: acc.zoneName,
+                                  mandatoryAddress: acc.mandatoryAddress
+                                });
+                                return acc.zoneName || `${z.zone_name_bn} (${z.zone_name})`;
+                              })()}
+                            </strong>
+                          </span>
                           {acc.tradeLicenseNumber && <span>ট্রেড লাইসেন্স: <strong className="font-mono">{acc.tradeLicenseNumber}</strong></span>}
                         </>
                       )}
@@ -824,14 +880,23 @@ export const StaffCredentialManager: React.FC<StaffCredentialManagerProps> = ({ 
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="font-bold text-neutral-700 block">ট্রেড লাইসেন্স ও এলাকা</label>
-                      <input
-                        type="text"
-                        value={createZoneName}
-                        onChange={(e) => setCreateZoneName(e.target.value)}
-                        placeholder="যেমন: উত্তরা, ঢাকা"
-                        className="w-full bg-[#F4FBF5] border border-[#C8E6C9] rounded-xl p-2.5 outline-none"
-                      />
+                      <label className="font-bold text-neutral-700 block">জোন / এলাকা (Zone) *</label>
+                      <select
+                        id="dealer-create-zone-select"
+                        value={createZoneId}
+                        onChange={(e) => {
+                          const z = getZoneById(e.target.value);
+                          setCreateZoneId(e.target.value);
+                          setCreateZoneName(z ? `${z.zone_name_bn} (${z.zone_name})` : '');
+                        }}
+                        className="w-full bg-[#F4FBF5] border border-[#C8E6C9] rounded-xl p-2.5 outline-none font-semibold"
+                      >
+                        {allDeliveryZones.map((z) => (
+                          <option key={z.zone_id} value={z.zone_id}>
+                            {z.district_name} — {z.zone_name_bn} ({z.zone_name})
+                          </option>
+                        ))}
+                      </select>
                     </div>
                   </>
                 )}
@@ -1013,13 +1078,23 @@ export const StaffCredentialManager: React.FC<StaffCredentialManagerProps> = ({ 
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="font-bold text-neutral-700 block">জোন / এলাকা</label>
-                      <input
-                        type="text"
-                        value={editZoneName}
-                        onChange={(e) => setEditZoneName(e.target.value)}
-                        className="w-full bg-[#F4FBF5] border border-[#C8E6C9] rounded-xl p-2.5 outline-none"
-                      />
+                      <label className="font-bold text-neutral-700 block">জোন / এলাকা (Dealer Zone)</label>
+                      <select
+                        id="dealer-edit-zone-select"
+                        value={editZoneId}
+                        onChange={(e) => {
+                          const z = getZoneById(e.target.value);
+                          setEditZoneId(e.target.value);
+                          setEditZoneName(z ? `${z.zone_name_bn} (${z.zone_name})` : '');
+                        }}
+                        className="w-full bg-[#F4FBF5] border border-[#C8E6C9] rounded-xl p-2.5 outline-none font-semibold"
+                      >
+                        {allDeliveryZones.map((z) => (
+                          <option key={z.zone_id} value={z.zone_id}>
+                            {z.district_name} — {z.zone_name_bn} ({z.zone_name})
+                          </option>
+                        ))}
+                      </select>
                     </div>
                   </>
                 )}
